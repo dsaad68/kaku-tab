@@ -1,0 +1,5 @@
+bin/
+dist/
+
+# Local agent/editor state
+.claude/settings.local.json
