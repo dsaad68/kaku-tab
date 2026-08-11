@@ -872,15 +872,17 @@ func (m *Model) rowWidth() int { return maxInt(20, m.listWidth()-scrollbarCells)
 
 func (m *Model) renderRow(r row, selected bool) string {
 	lw := m.rowWidth()
-	// A solid bar against the frame, not an arrow. The old ▸ was the same glyph
-	// as a collapsed session's fold arrow two columns over, so on a folded row
-	// the two sat side by side meaning entirely different things.
+	// ▶ (U+25B6), not the ▸ (U+25B8) a collapsed session folds with — same shape
+	// at a visibly heavier weight, and sat hard against the frame so two spaces
+	// separate it from that fold arrow rather than none.
 	//
 	// Both variants are exactly cursorCells wide on screen; the selected one
-	// just carries colour.
+	// just carries colour. Every candidate glyph was checked at 1 cell in tmux
+	// first: an ambiguous-width marker would shift every column on the selected
+	// row and nowhere else.
 	cursor := "   "
 	if selected {
-		cursor = cCursor.Render("▌") + "  "
+		cursor = cCursor.Render("▶") + "  "
 	}
 
 	if r.kind == kindHeader {

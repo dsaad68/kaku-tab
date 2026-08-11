@@ -278,7 +278,7 @@ func (m *SearchModel) View() string {
 			loc := fmt.Sprintf("%s:%s.%s", hit.win.Session, hit.win.Index, hit.pane.Index)
 			prefix := "   "
 			if i == m.cursor {
-				prefix = cCursor.Render("▌") + "  "
+				prefix = cCursor.Render("▶") + "  "
 			}
 			line := prefix + cGroup.Render(pad(loc, 20)) + " " + m.badge(hit.win) + " " +
 				cDim.Render(fmt.Sprintf("%5d ", hit.line)) + highlight(hit.text, m.query)
