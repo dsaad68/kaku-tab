@@ -807,6 +807,8 @@ func glyph(st model.Status) string {
 	}
 }
 
+// listWidth is the whole list column, scrollbar gutter included. The preview
+// is sized from what is left of innerW after it.
 func (m *Model) listWidth() int {
 	if m.opt.Preview && m.sideBySide() {
 		return m.innerW()*55/100 - 2
@@ -814,8 +816,11 @@ func (m *Model) listWidth() int {
 	return m.innerW()
 }
 
+// rowWidth is what a row's own content gets: the list column less the gutter.
+func (m *Model) rowWidth() int { return maxInt(20, m.listWidth()-scrollbarCells) }
+
 func (m *Model) renderRow(r row, selected bool) string {
-	lw := m.listWidth()
+	lw := m.rowWidth()
 	// Leading space keeps the cursor off the frame border. Both variants are
 	// exactly cursorCells wide on screen; the selected one just carries colour.
 	cursor := "   "
@@ -956,18 +961,19 @@ func (m *Model) View() string {
 	lines := make([]string, 0, h)
 	for i := m.offset; i < len(m.view) && i < m.offset+h; i++ {
 		r := m.rows[m.view[i]]
-		line := padToWidth(m.renderRow(r, i == m.cursor), m.listWidth())
+		line := padToWidth(m.renderRow(r, i == m.cursor), m.rowWidth())
 		if i == m.cursor {
 			line = cSel.Render(line)
 		}
 		lines = append(lines, line)
 	}
 	if len(lines) == 0 {
-		lines = append(lines, cDim.Render(padToWidth("  no matches", m.listWidth())))
+		lines = append(lines, cDim.Render(padToWidth("  no matches", m.rowWidth())))
 	}
 	for len(lines) < h {
-		lines = append(lines, strings.Repeat(" ", m.listWidth()))
+		lines = append(lines, strings.Repeat(" ", m.rowWidth()))
 	}
+	lines = withScrollbar(lines, m.rowWidth(), len(m.view), m.offset)
 	list := strings.Join(lines, "\n")
 
 	// ── body: list, optionally beside the preview ─────────────────────────

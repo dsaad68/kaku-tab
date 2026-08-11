@@ -262,6 +262,7 @@ func (m *SearchModel) View() string {
 	prompt := promptLeft + strings.Repeat(" ", maxInt(1, gap)) + right + " "
 
 	h := m.listHeight()
+	rw := maxInt(20, w-scrollbarCells)
 	lines := make([]string, 0, h)
 	switch {
 	case m.indexing:
@@ -281,7 +282,7 @@ func (m *SearchModel) View() string {
 			}
 			line := prefix + cGroup.Render(pad(loc, 20)) + " " + m.badge(hit.win) + " " +
 				cDim.Render(fmt.Sprintf("%5d ", hit.line)) + highlight(hit.text, m.query)
-			line = padToWidth(truncateANSI(line, w), w)
+			line = padToWidth(truncateANSI(line, rw), rw)
 			if i == m.cursor {
 				line = cSel.Render(line)
 			}
@@ -289,8 +290,11 @@ func (m *SearchModel) View() string {
 		}
 	}
 	for len(lines) < h {
-		lines = append(lines, strings.Repeat(" ", w))
+		lines = append(lines, strings.Repeat(" ", rw))
 	}
+	// A scrollback grep routinely returns hundreds of hits, so this list
+	// overflows far more often than the window list does.
+	lines = withScrollbar(lines, rw, len(m.view), m.offset)
 
 	hl := helpBarLines([][2]string{
 		{"enter", "jump"}, {"^t", "new tab"}, {"^u", "clear"}, {"esc", "cancel"},

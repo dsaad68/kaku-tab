@@ -62,12 +62,14 @@ func badgeCol(s string) int {
 	return runewidth.StringWidth(plain[:i])
 }
 
-func TestRowsNeverExceedListWidth(t *testing.T) {
+// Against rowWidth, not listWidth: a row that spilled into the scrollbar gutter
+// would push the bar off the frame.
+func TestRowsNeverExceedRowWidth(t *testing.T) {
 	m := newTestModel(t)
 	for _, r := range m.rows {
 		for _, sel := range []bool{false, true} {
-			if got := ansi.StringWidth(m.renderRow(r, sel)); got > m.listWidth() {
-				t.Errorf("row %q width %d exceeds list width %d", r.group, got, m.listWidth())
+			if got := ansi.StringWidth(m.renderRow(r, sel)); got > m.rowWidth() {
+				t.Errorf("row %q width %d exceeds row width %d", r.group, got, m.rowWidth())
 			}
 		}
 	}
