@@ -38,6 +38,7 @@ var (
 	cPrompt   = lipgloss.NewStyle().Foreground(colAccent).Bold(true)
 	cBorder   = lipgloss.NewStyle().Foreground(colBorder)
 	cThumb    = lipgloss.NewStyle().Foreground(colAccent)
+	cCursor   = lipgloss.NewStyle().Foreground(colAccent)
 	cTitle    = lipgloss.NewStyle().Foreground(colAccent).Bold(true)
 	cKey      = lipgloss.NewStyle().Foreground(colText).Bold(true)
 	cText     = lipgloss.NewStyle().Foreground(colText)

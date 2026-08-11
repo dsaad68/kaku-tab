@@ -81,12 +81,13 @@ type Result struct {
 
 // State survives a relaunch so toggling the preview does not lose your place.
 type State struct {
-	Query    string          `json:"query"`
-	Cursor   int             `json:"cursor"`
-	Offset   int             `json:"offset"`
-	Preview  bool            `json:"preview"`
-	PaneMode bool            `json:"pane_mode"`
-	Collapse map[string]bool `json:"collapse"`
+	Query        string          `json:"query"`
+	Cursor       int             `json:"cursor"`
+	Offset       int             `json:"offset"`
+	Preview      bool            `json:"preview"`
+	PaneMode     bool            `json:"pane_mode"`
+	HideDetached bool            `json:"hide_detached"`
+	Collapse     map[string]bool `json:"collapse"`
 }
 
 type Options struct {
@@ -102,6 +103,9 @@ type Options struct {
 	Restore  State    // carried across a preview-toggle relaunch
 	Sort     string   // SortTabs (default), SortMRU, or SortName
 	MRU      []string // window ids, most recent first; only read for SortMRU
+
+	// HideDetached drops sessions with no terminal tab from the list.
+	HideDetached bool
 }
 
 type previewMsg struct {
@@ -165,7 +169,8 @@ func New(ws []model.Window, opt Options) *Model {
 func (m *Model) State() State {
 	return State{
 		Query: m.query, Cursor: m.cursor, Offset: m.offset,
-		Preview: m.opt.Preview, PaneMode: m.opt.PaneMode, Collapse: m.collapse,
+		Preview: m.opt.Preview, PaneMode: m.opt.PaneMode,
+		HideDetached: m.opt.HideDetached, Collapse: m.collapse,
 	}
 }
 
@@ -174,9 +179,23 @@ func (m *Model) Result() Result { return m.result }
 // build turns resolved windows into tree rows.
 func (m *Model) build() {
 	m.rows = nil
+
+	// tmux marks every window of a client-less session Detached, so this drops
+	// whole sessions rather than punching holes in one — which is the point:
+	// what is left is exactly what you can switch between right now.
+	windows := m.windows
+	if m.opt.HideDetached {
+		windows = make([]model.Window, 0, len(m.windows))
+		for _, w := range m.windows {
+			if w.Status != model.Detached {
+				windows = append(windows, w)
+			}
+		}
+	}
+
 	groups := map[string][]model.Window{}
 	var order []string
-	for _, w := range m.windows {
+	for _, w := range windows {
 		g := w.Session
 		if m.opt.PaneMode {
 			g = w.Session + ":" + w.Index
@@ -417,10 +436,14 @@ func (m *Model) helpPairs() [][2]string {
 	if !m.opt.Preview {
 		preview = "show preview"
 	}
+	detached := "hide detached"
+	if m.opt.HideDetached {
+		detached = "show detached"
+	}
 	pairs := [][2]string{
 		{"enter", "switch"}, {"^/", preview}, {"^t", "new tab"}, {"tab", "fold"},
-		{"^p", "panes"}, {"^r", "rename"}, {"^x", "kill"}, {"^d", "detach"},
-		{"^u", "clear"},
+		{"^p", "panes"}, {"^e", detached}, {"^r", "rename"}, {"^x", "kill"},
+		{"^d", "detach"}, {"^u", "clear"},
 	}
 	if m.opt.Tree {
 		pairs[3] = [2]string{"tab", "fold (S-tab all)"}
@@ -658,6 +681,19 @@ func (m *Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.opt.PaneMode = !m.opt.PaneMode
 		return m, m.reloadCmd()
 
+	case "ctrl+e":
+		// Hold the cursor on the same row across the toggle. Unhiding inserts
+		// whole sessions above it, so without this the selection lands on
+		// something unrelated and Enter does the wrong thing.
+		keepID, keepHeader := "", false
+		if r, ok := m.current(); ok {
+			keepID, keepHeader = r.win.ID, r.kind == kindHeader
+		}
+		m.opt.HideDetached = !m.opt.HideDetached
+		m.build()
+		m.focusRow(keepID, keepHeader)
+		return m, m.previewCmd()
+
 	case "ctrl+x":
 		if r, ok := m.current(); ok && r.kind != kindHeader {
 			if err := action.Kill(r.win, m.opt.Suffix); err != nil {
@@ -718,6 +754,21 @@ func (m *Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, m.previewCmd()
 	}
 	return m, nil
+}
+
+// focusRow puts the cursor back on a window's row after the rows are rebuilt.
+// A no-op when that row is gone, leaving refilter's clamp to decide.
+func (m *Model) focusRow(id string, header bool) {
+	if id == "" {
+		return
+	}
+	for i, vi := range m.view {
+		if r := m.rows[vi]; r.win.ID == id && (r.kind == kindHeader) == header {
+			m.cursor = i
+			m.ensureVisible()
+			return
+		}
+	}
 }
 
 func (m *Model) move(d int) {
@@ -821,11 +872,15 @@ func (m *Model) rowWidth() int { return maxInt(20, m.listWidth()-scrollbarCells)
 
 func (m *Model) renderRow(r row, selected bool) string {
 	lw := m.rowWidth()
-	// Leading space keeps the cursor off the frame border. Both variants are
-	// exactly cursorCells wide on screen; the selected one just carries colour.
+	// A solid bar against the frame, not an arrow. The old ▸ was the same glyph
+	// as a collapsed session's fold arrow two columns over, so on a folded row
+	// the two sat side by side meaning entirely different things.
+	//
+	// Both variants are exactly cursorCells wide on screen; the selected one
+	// just carries colour.
 	cursor := "   "
 	if selected {
-		cursor = " " + cPrompt.Render("▸ ")
+		cursor = cCursor.Render("▌") + "  "
 	}
 
 	if r.kind == kindHeader {
@@ -868,7 +923,7 @@ func (m *Model) renderRow(r row, selected bool) string {
 	badgeCol := strings.Repeat(" ", maxInt(0, m.badgeW-ansi.StringWidth(badge))) + badge
 	fixed := cursorCells + ansi.StringWidth(indent) + m.badgeW + rightMargin
 	if r.kind == kindPane {
-		fixed += 1 + 1 + 4 // glyph, active marker, four single spaces
+		fixed += 1 + 1 + 5 // glyph, active marker, five single spaces
 	} else {
 		fixed += 1 + 4 + 2 + 5 // glyph, "NNp ", flags, five single spaces
 	}
@@ -883,7 +938,7 @@ func (m *Model) renderRow(r row, selected bool) string {
 		pathW = 8
 	}
 
-	var label, name, extra string
+	var label, name string
 	if r.kind == kindPane {
 		// In the tree the session is already on the header, so a pane row shows
 		// only its own coordinates.
@@ -892,10 +947,16 @@ func (m *Model) renderRow(r row, selected bool) string {
 			label = r.win.Session + ":" + label
 		}
 		name = strings.TrimSpace(r.pane.Cmd)
+
+		// The active-pane marker gets a column of its own, reserved on every
+		// pane row. Rendered flush against the glyph it read as one smudged
+		// symbol, and appearing only on the active row it shifted that row's
+		// every other column one cell right of its neighbours'.
+		marker := " "
 		if r.pane.Active {
-			extra = "*"
+			marker = cFlag.Render("*")
 		}
-		return truncateANSI(cursor+cDim.Render(indent)+glyph(r.status)+extra+" "+
+		return truncateANSI(cursor+cDim.Render(indent)+glyph(r.status)+" "+marker+" "+
 			pad(label, labelW)+" "+cName.Render(pad(name, nameW))+" "+
 			cDim.Render(pad(padLeft(tilde(r.pane.Path), pathW), pathW))+" "+
 			badgeCol, lw)
@@ -968,7 +1029,13 @@ func (m *Model) View() string {
 		lines = append(lines, line)
 	}
 	if len(lines) == 0 {
-		lines = append(lines, cDim.Render(padToWidth("  no matches", m.rowWidth())))
+		// An empty list with no query typed is the filter's doing, not the
+		// query's — say which, or it reads as "you have no sessions".
+		msg := "  no matches"
+		if m.opt.HideDetached && strings.TrimSpace(m.query) == "" {
+			msg = "  nothing attached — ^e shows detached sessions"
+		}
+		lines = append(lines, cDim.Render(padToWidth(msg, m.rowWidth())))
 	}
 	for len(lines) < h {
 		lines = append(lines, strings.Repeat(" ", m.rowWidth()))

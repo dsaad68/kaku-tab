@@ -270,6 +270,14 @@ func pick(selfTTY, selfSession string) error {
 		preview = restore.Preview
 	}
 
+	// Deliberately not written back the way @kaku-tab-preview is. A filter that
+	// silently persisted would have you reopen the picker one day, find half
+	// your sessions gone, and have no idea why.
+	hideDetached := tmux.Option("@kaku-tab-detached", "on") == "off"
+	if resumed {
+		hideDetached = restore.HideDetached
+	}
+
 	self, _ := os.Executable()
 	ctx := action.Ctx{SelfTTY: selfTTY, Suffix: suffix, AttachSh: self}
 
@@ -286,6 +294,8 @@ func pick(selfTTY, selfSession string) error {
 		Restore:  restore.State,
 		Sort:     sortMode,
 		MRU:      mruList(sortMode),
+
+		HideDetached: hideDetached,
 	})
 
 	// The picker owns the popup's terminal; Kaku's own alt-screen is untouched.

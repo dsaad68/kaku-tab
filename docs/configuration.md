@@ -45,6 +45,7 @@ config.send_composed_key_when_right_alt_is_pressed = false
 |---|---|---|
 | `@kaku-tab-open-mode` | `reuse` | what <kbd>Enter</kbd> does for a hidden window: `reuse` retargets the session's existing tab, `go` opens a new one |
 | `@kaku-tab-sort` | `tabs` | list order: `tabs`, `mru`, or `name` — see below |
+| `@kaku-tab-detached` | `on` | `off` starts with detached sessions hidden; <kbd>Ctrl</kbd>+<kbd>E</kbd> toggles |
 | `@kaku-tab-scope` | `all` | `all`, `session` (current session only), or `group` (current session group) |
 | `@kaku-tab-ignore` | *(empty)* | comma-separated session names to hide, e.g. a throwaway popup session |
 | `@kaku-tab-satellite-suffix` | `~kaku` | naming for grouped satellite sessions |
