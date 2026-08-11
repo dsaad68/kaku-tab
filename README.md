@@ -110,6 +110,8 @@ and press <kbd>Alt</kbd>+<kbd>L</kbd>.
 
 | Key | Action |
 |---|---|
+| <kbd>↑</kbd> <kbd>↓</kbd> | move (<kbd>Ctrl</kbd>+<kbd>K</kbd> / <kbd>Ctrl</kbd>+<kbd>J</kbd> too) |
+| <kbd>PgUp</kbd> <kbd>PgDn</kbd> <kbd>Home</kbd> <kbd>End</kbd> | move by a screenful, or to either end |
 | <kbd>Enter</kbd> | switch to that window, reusing the session's existing tab |
 | <kbd>Ctrl</kbd>+<kbd>T</kbd> | force a **new** tab, so two windows of one session show at once |
 | <kbd>Tab</kbd> | fold/unfold a session (works from a child row too) |
@@ -124,6 +126,11 @@ and press <kbd>Alt</kbd>+<kbd>L</kbd>.
 
 Typing filters. A session header matches on behalf of its windows, so `api`
 shows the session *and* everything under it.
+
+When there are more rows than fit, a scrollbar appears down the right edge —
+otherwise a list that continues below the frame looks exactly like one that
+ends there. <kbd>Shift</kbd>+<kbd>Tab</kbd> folds every session, which is
+usually the faster way to get a long list back onto one screen.
 
 ### Enter vs Ctrl-T
 
