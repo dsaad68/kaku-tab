@@ -213,3 +213,10 @@ func Option(name, def string) string {
 	}
 	return strings.TrimSpace(out)
 }
+
+// SetOption writes a global tmux option. Used for the small amount of state
+// kaku-tab keeps on the server rather than on disk.
+func SetOption(name, value string) error {
+	_, err := Run("set-option", "-g", name, value)
+	return err
+}

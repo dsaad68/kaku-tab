@@ -29,7 +29,19 @@ import (
 	"github.com/dsaad68/kaku-tab/internal/action"
 	"github.com/dsaad68/kaku-tab/internal/kaku"
 	"github.com/dsaad68/kaku-tab/internal/model"
+	"github.com/dsaad68/kaku-tab/internal/mru"
 	"github.com/dsaad68/kaku-tab/internal/tmux"
+)
+
+// Sort modes for the session list, from @kaku-tab-sort.
+const (
+	// SortTabs lists sessions that have a terminal tab first, then the rest,
+	// alphabetically within each. The default.
+	SortTabs = "tabs"
+	// SortMRU lists whatever you most recently switched to first.
+	SortMRU = "mru"
+	// SortName is plain alphabetical, ignoring whether a session has a tab.
+	SortName = "name"
 )
 
 type rowKind int
@@ -86,8 +98,10 @@ type Options struct {
 	OpenMode action.Mode
 	Reload   func(panes bool) ([]model.Window, error)
 	Ctx      action.Ctx
-	Depth    int   // scrollback lines per pane for search
-	Restore  State // carried across a preview-toggle relaunch
+	Depth    int      // scrollback lines per pane for search
+	Restore  State    // carried across a preview-toggle relaunch
+	Sort     string   // SortTabs (default), SortMRU, or SortName
+	MRU      []string // window ids, most recent first; only read for SortMRU
 }
 
 type previewMsg struct {
@@ -185,11 +199,41 @@ func (m *Model) build() {
 			}
 		}
 	}
-	sort.SliceStable(order, func(i, j int) bool {
-		if attached[order[i]] != attached[order[j]] {
-			return attached[order[i]]
+
+	// Under SortMRU the recorded order wins, and everything you have never
+	// switched to falls back to the rules above — so a fresh tmux server, with
+	// nothing recorded yet, looks exactly like SortTabs.
+	best := map[string]int{} // group -> best rank in it; absent = never picked
+	if m.opt.Sort == SortMRU {
+		ranks := mru.Ranks(m.opt.MRU, m.here())
+		for g, ws := range groups {
+			sortByRank(ws, ranks)
+			for _, w := range ws {
+				if r, ok := ranks[w.ID]; ok {
+					if cur, seen := best[g]; !seen || r < cur {
+						best[g] = r
+					}
+				}
+			}
 		}
-		return order[i] < order[j]
+	}
+
+	sort.SliceStable(order, func(i, j int) bool {
+		a, b := order[i], order[j]
+		if m.opt.Sort == SortMRU {
+			ra, oka := best[a]
+			rb, okb := best[b]
+			if oka != okb {
+				return oka
+			}
+			if oka && ra != rb {
+				return ra < rb
+			}
+		}
+		if m.opt.Sort != SortName && attached[a] != attached[b] {
+			return attached[a]
+		}
+		return a < b
 	})
 
 	for _, g := range order {
@@ -214,7 +258,7 @@ func (m *Model) build() {
 			m.rows = append(m.rows, row{
 				kind: kindHeader, group: g, search: g, count: n,
 				status: hstat, tabID: htab,
-				win: pickHeaderWindow(ws),
+				win: pickHeaderWindow(ws, m.opt.Sort == SortMRU),
 			})
 		}
 		for i, w := range ws {
@@ -240,9 +284,48 @@ func (m *Model) build() {
 	m.refilter()
 }
 
+// here is the tmux window displayed in the tab the picker was invoked from, or
+// "" when the picker cannot tell (no Kaku CLI, or a client outside a tab).
+func (m *Model) here() string {
+	if m.opt.SelfTab == "" {
+		return ""
+	}
+	for _, w := range m.windows {
+		if w.Status == model.Visible && w.TabID == m.opt.SelfTab {
+			return w.ID
+		}
+	}
+	return ""
+}
+
+// sortByRank puts recently switched-to windows first. Windows with no recorded
+// rank keep resolve's index order behind them, which is why the comparison
+// returns false rather than falling through to an index compare.
+func sortByRank(ws []model.Window, ranks map[string]int) {
+	sort.SliceStable(ws, func(i, j int) bool {
+		ri, oki := ranks[ws[i].ID]
+		rj, okj := ranks[ws[j].ID]
+		if oki != okj {
+			return oki
+		}
+		if !oki {
+			return false
+		}
+		return ri < rj
+	})
+}
+
 // pickHeaderWindow chooses what Enter on a header targets: the window that
 // session is currently showing, else its first.
-func pickHeaderWindow(ws []model.Window) model.Window {
+//
+// Under an MRU order the group is already sorted by where you were, and the
+// currently-showing window is the one place Enter must not land — so the first
+// row wins instead. Without this the top header of an MRU list would target the
+// window you are already in.
+func pickHeaderWindow(ws []model.Window, byMRU bool) model.Window {
+	if byMRU {
+		return ws[0]
+	}
 	for _, w := range ws {
 		if w.Status == model.Visible {
 			return w
@@ -970,13 +1053,6 @@ func countSelectable(rows []row) int {
 
 func maxInt(a, b int) int {
 	if a > b {
-		return a
-	}
-	return b
-}
-
-func minInt(a, b int) int {
-	if a < b {
 		return a
 	}
 	return b

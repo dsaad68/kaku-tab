@@ -44,11 +44,41 @@ config.send_composed_key_when_right_alt_is_pressed = false
 | Option | Default | Meaning |
 |---|---|---|
 | `@kaku-tab-open-mode` | `reuse` | what <kbd>Enter</kbd> does for a hidden window: `reuse` retargets the session's existing tab, `go` opens a new one |
+| `@kaku-tab-sort` | `tabs` | list order: `tabs`, `mru`, or `name` — see below |
 | `@kaku-tab-scope` | `all` | `all`, `session` (current session only), or `group` (current session group) |
 | `@kaku-tab-ignore` | *(empty)* | comma-separated session names to hide, e.g. a throwaway popup session |
 | `@kaku-tab-satellite-suffix` | `~kaku` | naming for grouped satellite sessions |
 | `@kaku-tab-mux-cli` | *(auto)* | force `kaku` or `wezterm` instead of auto-detecting |
 | `@kaku-tab-search-depth` | `2000` | scrollback lines per pane indexed by search |
+
+### Sort order
+
+| Value | Order |
+|---|---|
+| `tabs` | sessions that have a terminal tab first, then the rest; alphabetical within each. The default. |
+| `mru` | whatever you most recently switched to, first — sessions and windows both. |
+| `name` | plain alphabetical, ignoring whether a session has a tab. |
+
+`mru` is the one to reach for if you bounce between the same two or three
+windows: the window you were in *before* this one sits at the top of the list,
+so <kbd>Alt</kbd>+<kbd>L</kbd> <kbd>Enter</kbd> is a straight toggle.
+
+The window you are currently in is deliberately pushed one place down. It heads
+the history — switching here is what recorded it — and leaving it at the top
+would put the cursor on a row whose <kbd>Enter</kbd> does nothing.
+
+Only windows you have switched to *through kaku-tab* are ranked; everything
+else falls in behind them in the `tabs` order. So a freshly started tmux server
+looks exactly like the default until the history fills in.
+
+The history is kept in a tmux option rather than a file, because tmux window
+ids (`@42`) mean nothing outside the server that issued them and a server
+option lives exactly that long:
+
+```sh
+tmux show-option -gqv @kaku-tab-mru     # most recent first
+tmux set-option  -gu @kaku-tab-mru      # forget it
+```
 
 ## Tab titles
 

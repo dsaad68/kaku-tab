@@ -1,0 +1,54 @@
+version: "2"
+
+linters:
+  default: none
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - bodyclose
+    - copyloopvar
+    - misspell
+    - nilerr
+    - revive
+    - unconvert
+
+  settings:
+    errcheck:
+      # A deliberate `_ =` is how this codebase marks "best effort, and the
+      # caller cannot do anything useful with the failure" — reaping a
+      # satellite, focusing a pane. Flagging those would just add noise.
+      check-blank: false
+    revive:
+      # Deliberately without the `exported` rule. This codebase comments why
+      # something is the way it is, not what it is; that rule would demand a
+      # line of restated signature above every thin tmux wrapper and every
+      # bubbletea interface method, and a gate full of noise is a gate people
+      # learn to skip.
+      rules:
+        - name: indent-error-flow
+        - name: var-declaration
+        - name: errorf
+        - name: context-as-argument
+        - name: increment-decrement
+        - name: unreachable-code
+    staticcheck:
+      checks: ['all']
+
+  exclusions:
+    generated: lax
+    rules:
+      # Test helpers are allowed to be undocumented and to ignore errors.
+      - path: _test\.go
+        linters: [errcheck, revive]
+
+formatters:
+  enable:
+    - gofmt
+
+issues:
+  # A lint gate that only reports the first few problems is not a gate.
+  max-issues-per-linter: 0
+  max-same-issues: 0

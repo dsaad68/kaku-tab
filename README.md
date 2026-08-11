@@ -72,6 +72,16 @@ set -g @plugin 'dsaad68/kaku-tab'
 Then <kbd>prefix</kbd>+<kbd>I</kbd>. The plugin builds its binary on first load
 if Go is available.
 
+### Homebrew
+
+```sh
+brew install --cask dsaad68/tap/kaku-tab
+```
+
+That installs the binary only; tmux still needs the plugin entry point, so pair
+it with the TPM line above or a checkout. Nothing gets built — the plugin finds
+`kaku-tab` on `PATH`.
+
 ### Manual
 
 ```sh
@@ -138,8 +148,14 @@ Every option, with defaults, is in
 set -g @kaku-tab-key        'M-l'    # picker binding
 set -g @kaku-tab-search-key 'M-p'    # optional: scrollback search
 set -g @kaku-tab-preview    'off'    # ^/ toggles it
+set -g @kaku-tab-sort       'tabs'   # or 'mru' / 'name'
 set -g @kaku-tab-ignore     'popup'  # sessions to hide, comma-separated
 ```
+
+With `@kaku-tab-sort 'mru'` the list is ordered by what you most recently
+switched to, and the window you are in now is pushed one place down — so
+<kbd>Alt</kbd>+<kbd>L</kbd> <kbd>Enter</kbd> toggles back to where you just
+were, alt-tab style.
 
 ## Scrollback search
 
@@ -172,9 +188,11 @@ brings the sessions back, this brings the tabs back.
 ## Development
 
 ```sh
-make build    # bin/kaku-tab
-make test     # go vet + go test
-make lint     # gofmt + vet
+make build             # bin/kaku-tab
+make test              # go vet + go test
+make lint              # golangci-lint, same config as CI
+make cover             # tests + the thresholds in .testcoverage.yml
+make release-snapshot  # build the release artifacts, publish nothing
 ```
 
 Tests run against recorded fixtures — no tmux server or terminal required.

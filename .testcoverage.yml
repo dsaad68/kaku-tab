@@ -1,0 +1,34 @@
+# Thresholds for github.com/vladopajic/go-test-coverage.
+#
+# These are a ratchet set just under where the tree stands today, not an
+# aspiration. The point is that a change cannot quietly delete coverage from
+# internal/resolve — the package the invariants in CLAUDE.md live in — on its
+# way to fixing something else.
+
+profile: cover.out
+
+exclude:
+  paths:
+    # Thin wrappers around an external process: the tmux CLI, the Kaku mux CLI,
+    # and argument parsing in main. A unit test of these can only assert the
+    # arguments back at itself, so they are excluded rather than pinned at 0
+    # and dragging the total into meaninglessness. They are covered instead by
+    # running the real thing — see "Verifying changes" in CLAUDE.md.
+    - ^cmd/kaku-tab/
+    - ^internal/tmux/
+    - ^internal/kaku/
+
+threshold:
+  file: 0
+  package: 0
+  total: 40
+
+override:
+  # The join. Everything else is presentation or plumbing around the table it
+  # produces, so this is the number that matters most.
+  - path: ^internal/resolve$
+    threshold: 85
+  - path: ^internal/ui$
+    threshold: 40
+  - path: ^internal/mru$
+    threshold: 80

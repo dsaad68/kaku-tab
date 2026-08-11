@@ -18,7 +18,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.22'
+          go-version-file: go.mod
           cache: true
 
       - name: gofmt
@@ -36,3 +36,53 @@ jobs:
       # The plugin entry point is shell; catch syntax errors before users do.
       - name: shellcheck kaku-tab.tmux
         run: bash -n kaku-tab.tmux
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - uses: golangci/golangci-lint-action@v9
+        with:
+          # Pinned: an unpinned linter turns an unrelated upstream release into
+          # a red build on a PR that changed nothing.
+          version: v2.12.2
+
+  coverage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: test with coverage
+        run: go test -covermode=atomic -coverprofile=cover.out ./...
+
+      # Thresholds live in .testcoverage.yml, set just under where the tree
+      # stands so this is a ratchet rather than a wall.
+      - uses: vladopajic/go-test-coverage@v2
+        with:
+          config: ./.testcoverage.yml
+
+  # The release config is only exercised on a tag push, which is the worst
+  # possible time to discover it no longer parses.
+  goreleaser-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          version: '~> v2'
+          args: check

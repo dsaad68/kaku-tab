@@ -8,10 +8,15 @@ Go binary + a thin `kaku-tab.tmux` plugin entry point.
 ```sh
 make build   # bin/kaku-tab
 make test    # go vet + go test
-make lint    # gofmt + vet
+make lint    # golangci-lint, same .golangci.yml as CI
+make cover   # tests + coverage thresholds from .testcoverage.yml
 ```
 
 Tests use recorded fixtures — no tmux server or terminal needed.
+
+CI runs test / lint / coverage / goreleaser-check. The coverage thresholds are
+a ratchet set just under the current numbers: if a change drops
+`internal/resolve`, that is the signal, not a nuisance.
 
 ## Where to start
 

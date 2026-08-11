@@ -26,6 +26,7 @@ import (
 	"github.com/dsaad68/kaku-tab/internal/action"
 	"github.com/dsaad68/kaku-tab/internal/kaku"
 	"github.com/dsaad68/kaku-tab/internal/model"
+	"github.com/dsaad68/kaku-tab/internal/mru"
 	"github.com/dsaad68/kaku-tab/internal/resolve"
 	"github.com/dsaad68/kaku-tab/internal/tmux"
 	"github.com/dsaad68/kaku-tab/internal/ui"
@@ -49,6 +50,26 @@ func opts(selfSession string, withPanes bool) resolve.Options {
 		WithPanes:   withPanes,
 		Ignore:      ignored(),
 	}
+}
+
+// sortOption reads @kaku-tab-sort. An unrecognised value falls back to the
+// default rather than failing the picker over a typo in tmux.conf.
+func sortOption() string {
+	switch s := tmux.Option("@kaku-tab-sort", ui.SortTabs); s {
+	case ui.SortMRU, ui.SortName:
+		return s
+	default:
+		return ui.SortTabs
+	}
+}
+
+// mruList is only read for the sort mode that uses it — every tmux.Option is a
+// subprocess, and the picker runs one on every keypress-triggered popup.
+func mruList(sortMode string) []string {
+	if sortMode != ui.SortMRU {
+		return nil
+	}
+	return mru.List(mru.Tmux{})
 }
 
 // ignored lists sessions to hide, e.g. a throwaway popup session bound to a
@@ -139,8 +160,8 @@ func popup(selfTTY, selfSession string) error {
 		return err
 	}
 	path := stateFile.Name()
-	stateFile.Close()
-	defer os.Remove(path)
+	_ = stateFile.Close()
+	defer func() { _ = os.Remove(path) }()
 
 	self, _ := os.Executable()
 	preview := tmux.Option("@kaku-tab-preview", "off") == "on"
@@ -252,6 +273,7 @@ func pick(selfTTY, selfSession string) error {
 	self, _ := os.Executable()
 	ctx := action.Ctx{SelfTTY: selfTTY, Suffix: suffix, AttachSh: self}
 
+	sortMode := sortOption()
 	m := ui.New(ws, ui.Options{
 		Suffix:   suffix,
 		SelfTab:  selfTab,
@@ -262,6 +284,8 @@ func pick(selfTTY, selfSession string) error {
 		Reload:   reload,
 		Ctx:      ctx,
 		Restore:  restore.State,
+		Sort:     sortMode,
+		MRU:      mruList(sortMode),
 	})
 
 	// The picker owns the popup's terminal; Kaku's own alt-screen is untouched.
@@ -275,6 +299,10 @@ func pick(selfTTY, selfSession string) error {
 	if res.Relaunch || !res.Chosen {
 		return nil
 	}
+	// Recorded unconditionally, not just under @kaku-tab-sort 'mru': the list
+	// has to already be there for the option to do anything the first time it
+	// is switched on.
+	_ = mru.Record(mru.Tmux{}, res.Window.ID)
 	return action.Go(res.Window, res.PaneID, res.Mode, ctx)
 }
 
@@ -305,6 +333,7 @@ func search(selfTTY, selfSession, query string) error {
 	if !res.Chosen {
 		return nil
 	}
+	_ = mru.Record(mru.Tmux{}, res.Window.ID)
 	return action.Go(res.Window, res.PaneID, res.Mode, ctx)
 }
 
