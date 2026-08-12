@@ -18,7 +18,7 @@ Works with [Kaku](https://github.com/tw93/Kaku) and [WezTerm](https://wezterm.or
 ╭── tmux ⇄ kaku ──────────────────────────────────────────────────────────────────╮
 │  kaku-tab ❯                                                                17/17 │
 ├──────────────────────────────────────────────────────────────────────────────────┤
-│▶  ▾ api  3 windows  ⟦kaku 15⟧                                                    │
+│➤  ▾ api  3 windows  ⟦kaku 15⟧                                                    │
 │    ├ ◍ 1              nvim         2p    ~/src/api                  ⟦hidden 15⟧ │
 │    ├ ◍ 2              zsh          2p    ~/src/api/cmd              ⟦hidden 15⟧ │
 │    └ ● 3              just         2p !  ~/src/api                    ⟦kaku 15⟧ │
