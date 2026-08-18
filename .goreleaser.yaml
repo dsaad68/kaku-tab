@@ -47,39 +47,40 @@ changelog:
       - '^chore:'
       - Merge pull request
 
-# A cask, not a formula: goreleaser deprecated `brews`, and a cask also strips
-# the macOS quarantine attribute from the downloaded binary. `brew install
-# --cask` is macOS-only, which is where Kaku runs; Linux users have `go install`
-# and the tarballs above.
-homebrew_casks:
-  - name: kaku-tab
-    binaries: [kaku-tab]
-    repository:
-      owner: dsaad68
-      name: homebrew-tap
-      token: '{{ .Env.HOMEBREW_TAP_TOKEN }}'
-    # Publishing needs the tap repo and a token with write access to it. Until
-    # both exist the release still succeeds and simply skips the cask, rather
-    # than failing after the archives are already uploaded.
-    skip_upload: '{{ if index .Env "HOMEBREW_TAP_TOKEN" }}false{{ else }}true{{ end }}'
-    homepage: https://github.com/dsaad68/kaku-tab
-    description: A tmux plugin that maps one tmux window to one terminal tab
-    caveats: |
-      This installs the binary only. tmux still needs the plugin entry point,
-      from TPM:
-
-        set -g @plugin 'dsaad68/kaku-tab'
-
-      or from a checkout:
-
-        run-shell '~/.tmux/plugins/kaku-tab/kaku-tab.tmux'
-
-      Either way it finds kaku-tab on PATH, so no build step runs.
+# Homebrew is off until the tap has a write token. The block below is kept
+# rather than deleted: re-enabling it is uncommenting this, adding
+# HOMEBREW_TAP_TOKEN as a repo secret, and restoring the env line in
+# .github/workflows/release.yml. A cask, not a formula — goreleaser deprecated
+# `brews`, and a cask also strips the macOS quarantine attribute from the
+# downloaded binary. `brew install --cask` is macOS-only, which is where Kaku
+# runs; Linux users have `go install` and the tarballs above.
+#
+# homebrew_casks:
+#   - name: kaku-tab
+#     binaries: [kaku-tab]
+#     repository:
+#       owner: dsaad68
+#       name: homebrew-tap
+#       token: '{{ .Env.HOMEBREW_TAP_TOKEN }}'
+#     homepage: https://github.com/dsaad68/kaku-tab
+#     description: A tmux plugin that maps one tmux window to one terminal tab
+#     caveats: |
+#       This installs the binary only. tmux still needs the plugin entry point,
+#       from TPM:
+#
+#         set -g @plugin 'dsaad68/kaku-tab'
+#
+#       or from a checkout:
+#
+#         run-shell '~/.tmux/plugins/kaku-tab/kaku-tab.tmux'
+#
+#       Either way it finds kaku-tab on PATH, so no build step runs.
 
 release:
   draft: false
   prerelease: auto
   footer: |
     ---
-    Installing: `brew install dsaad68/tap/kaku-tab`, or unpack the archive for
-    your platform and put `kaku-tab` on your PATH.
+    Installing: unpack the archive for your platform and put `kaku-tab` on your
+    PATH, or `go install github.com/dsaad68/kaku-tab/cmd/kaku-tab@latest`. tmux
+    still needs the plugin entry point — see the README.
