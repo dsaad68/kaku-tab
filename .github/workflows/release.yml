@@ -28,7 +28,6 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Optional. Without it the release still publishes and the Homebrew
-          # cask is skipped — see the skip_upload guard in .goreleaser.yaml.
-          # Needs a PAT with write access to dsaad68/homebrew-tap.
-          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          # The Homebrew cask is commented out in .goreleaser.yaml until the tap
+          # has a write token. Restore this line alongside it:
+          # HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}

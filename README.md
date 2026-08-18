@@ -72,15 +72,23 @@ set -g @plugin 'dsaad68/kaku-tab'
 Then <kbd>prefix</kbd>+<kbd>I</kbd>. The plugin builds its binary on first load
 if Go is available.
 
-### Homebrew
+### Prebuilt binary
+
+Grab the archive for your platform from the [releases
+page](https://github.com/dsaad68/kaku-tab/releases), unpack it, and put
+`kaku-tab` on your `PATH`:
 
 ```sh
-brew install --cask dsaad68/tap/kaku-tab
+tar xzf kaku-tab_<version>_darwin_arm64.tar.gz
+install kaku-tab /usr/local/bin/
 ```
 
 That installs the binary only; tmux still needs the plugin entry point, so pair
 it with the TPM line above or a checkout. Nothing gets built — the plugin finds
 `kaku-tab` on `PATH`.
+
+The binary is not notarized, so macOS quarantines it on first run. Clear the
+attribute with `xattr -d com.apple.quarantine /usr/local/bin/kaku-tab`.
 
 ### Manual
 
