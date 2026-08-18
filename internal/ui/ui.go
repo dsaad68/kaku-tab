@@ -29,7 +29,19 @@ import (
 	"github.com/dsaad68/kaku-tab/internal/action"
 	"github.com/dsaad68/kaku-tab/internal/kaku"
 	"github.com/dsaad68/kaku-tab/internal/model"
+	"github.com/dsaad68/kaku-tab/internal/mru"
 	"github.com/dsaad68/kaku-tab/internal/tmux"
+)
+
+// Sort modes for the session list, from @kaku-tab-sort.
+const (
+	// SortTabs lists sessions that have a terminal tab first, then the rest,
+	// alphabetically within each. The default.
+	SortTabs = "tabs"
+	// SortMRU lists whatever you most recently switched to first.
+	SortMRU = "mru"
+	// SortName is plain alphabetical, ignoring whether a session has a tab.
+	SortName = "name"
 )
 
 type rowKind int
@@ -69,12 +81,13 @@ type Result struct {
 
 // State survives a relaunch so toggling the preview does not lose your place.
 type State struct {
-	Query    string          `json:"query"`
-	Cursor   int             `json:"cursor"`
-	Offset   int             `json:"offset"`
-	Preview  bool            `json:"preview"`
-	PaneMode bool            `json:"pane_mode"`
-	Collapse map[string]bool `json:"collapse"`
+	Query        string          `json:"query"`
+	Cursor       int             `json:"cursor"`
+	Offset       int             `json:"offset"`
+	Preview      bool            `json:"preview"`
+	PaneMode     bool            `json:"pane_mode"`
+	HideDetached bool            `json:"hide_detached"`
+	Collapse     map[string]bool `json:"collapse"`
 }
 
 type Options struct {
@@ -86,8 +99,13 @@ type Options struct {
 	OpenMode action.Mode
 	Reload   func(panes bool) ([]model.Window, error)
 	Ctx      action.Ctx
-	Depth    int   // scrollback lines per pane for search
-	Restore  State // carried across a preview-toggle relaunch
+	Depth    int      // scrollback lines per pane for search
+	Restore  State    // carried across a preview-toggle relaunch
+	Sort     string   // SortTabs (default), SortMRU, or SortName
+	MRU      []string // window ids, most recent first; only read for SortMRU
+
+	// HideDetached drops sessions with no terminal tab from the list.
+	HideDetached bool
 }
 
 type previewMsg struct {
@@ -151,7 +169,8 @@ func New(ws []model.Window, opt Options) *Model {
 func (m *Model) State() State {
 	return State{
 		Query: m.query, Cursor: m.cursor, Offset: m.offset,
-		Preview: m.opt.Preview, PaneMode: m.opt.PaneMode, Collapse: m.collapse,
+		Preview: m.opt.Preview, PaneMode: m.opt.PaneMode,
+		HideDetached: m.opt.HideDetached, Collapse: m.collapse,
 	}
 }
 
@@ -160,9 +179,23 @@ func (m *Model) Result() Result { return m.result }
 // build turns resolved windows into tree rows.
 func (m *Model) build() {
 	m.rows = nil
+
+	// tmux marks every window of a client-less session Detached, so this drops
+	// whole sessions rather than punching holes in one — which is the point:
+	// what is left is exactly what you can switch between right now.
+	windows := m.windows
+	if m.opt.HideDetached {
+		windows = make([]model.Window, 0, len(m.windows))
+		for _, w := range m.windows {
+			if w.Status != model.Detached {
+				windows = append(windows, w)
+			}
+		}
+	}
+
 	groups := map[string][]model.Window{}
 	var order []string
-	for _, w := range m.windows {
+	for _, w := range windows {
 		g := w.Session
 		if m.opt.PaneMode {
 			g = w.Session + ":" + w.Index
@@ -185,11 +218,41 @@ func (m *Model) build() {
 			}
 		}
 	}
-	sort.SliceStable(order, func(i, j int) bool {
-		if attached[order[i]] != attached[order[j]] {
-			return attached[order[i]]
+
+	// Under SortMRU the recorded order wins, and everything you have never
+	// switched to falls back to the rules above — so a fresh tmux server, with
+	// nothing recorded yet, looks exactly like SortTabs.
+	best := map[string]int{} // group -> best rank in it; absent = never picked
+	if m.opt.Sort == SortMRU {
+		ranks := mru.Ranks(m.opt.MRU, m.here())
+		for g, ws := range groups {
+			sortByRank(ws, ranks)
+			for _, w := range ws {
+				if r, ok := ranks[w.ID]; ok {
+					if cur, seen := best[g]; !seen || r < cur {
+						best[g] = r
+					}
+				}
+			}
 		}
-		return order[i] < order[j]
+	}
+
+	sort.SliceStable(order, func(i, j int) bool {
+		a, b := order[i], order[j]
+		if m.opt.Sort == SortMRU {
+			ra, oka := best[a]
+			rb, okb := best[b]
+			if oka != okb {
+				return oka
+			}
+			if oka && ra != rb {
+				return ra < rb
+			}
+		}
+		if m.opt.Sort != SortName && attached[a] != attached[b] {
+			return attached[a]
+		}
+		return a < b
 	})
 
 	for _, g := range order {
@@ -214,7 +277,7 @@ func (m *Model) build() {
 			m.rows = append(m.rows, row{
 				kind: kindHeader, group: g, search: g, count: n,
 				status: hstat, tabID: htab,
-				win: pickHeaderWindow(ws),
+				win: pickHeaderWindow(ws, m.opt.Sort == SortMRU),
 			})
 		}
 		for i, w := range ws {
@@ -240,9 +303,48 @@ func (m *Model) build() {
 	m.refilter()
 }
 
+// here is the tmux window displayed in the tab the picker was invoked from, or
+// "" when the picker cannot tell (no Kaku CLI, or a client outside a tab).
+func (m *Model) here() string {
+	if m.opt.SelfTab == "" {
+		return ""
+	}
+	for _, w := range m.windows {
+		if w.Status == model.Visible && w.TabID == m.opt.SelfTab {
+			return w.ID
+		}
+	}
+	return ""
+}
+
+// sortByRank puts recently switched-to windows first. Windows with no recorded
+// rank keep resolve's index order behind them, which is why the comparison
+// returns false rather than falling through to an index compare.
+func sortByRank(ws []model.Window, ranks map[string]int) {
+	sort.SliceStable(ws, func(i, j int) bool {
+		ri, oki := ranks[ws[i].ID]
+		rj, okj := ranks[ws[j].ID]
+		if oki != okj {
+			return oki
+		}
+		if !oki {
+			return false
+		}
+		return ri < rj
+	})
+}
+
 // pickHeaderWindow chooses what Enter on a header targets: the window that
 // session is currently showing, else its first.
-func pickHeaderWindow(ws []model.Window) model.Window {
+//
+// Under an MRU order the group is already sorted by where you were, and the
+// currently-showing window is the one place Enter must not land — so the first
+// row wins instead. Without this the top header of an MRU list would target the
+// window you are already in.
+func pickHeaderWindow(ws []model.Window, byMRU bool) model.Window {
+	if byMRU {
+		return ws[0]
+	}
 	for _, w := range ws {
 		if w.Status == model.Visible {
 			return w
@@ -334,10 +436,14 @@ func (m *Model) helpPairs() [][2]string {
 	if !m.opt.Preview {
 		preview = "show preview"
 	}
+	detached := "hide detached"
+	if m.opt.HideDetached {
+		detached = "show detached"
+	}
 	pairs := [][2]string{
 		{"enter", "switch"}, {"^/", preview}, {"^t", "new tab"}, {"tab", "fold"},
-		{"^p", "panes"}, {"^r", "rename"}, {"^x", "kill"}, {"^d", "detach"},
-		{"^u", "clear"},
+		{"^p", "panes"}, {"^e", detached}, {"^r", "rename"}, {"^x", "kill"},
+		{"^d", "detach"}, {"^u", "clear"},
 	}
 	if m.opt.Tree {
 		pairs[3] = [2]string{"tab", "fold (S-tab all)"}
@@ -575,6 +681,19 @@ func (m *Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.opt.PaneMode = !m.opt.PaneMode
 		return m, m.reloadCmd()
 
+	case "ctrl+e":
+		// Hold the cursor on the same row across the toggle. Unhiding inserts
+		// whole sessions above it, so without this the selection lands on
+		// something unrelated and Enter does the wrong thing.
+		keepID, keepHeader := "", false
+		if r, ok := m.current(); ok {
+			keepID, keepHeader = r.win.ID, r.kind == kindHeader
+		}
+		m.opt.HideDetached = !m.opt.HideDetached
+		m.build()
+		m.focusRow(keepID, keepHeader)
+		return m, m.previewCmd()
+
 	case "ctrl+x":
 		if r, ok := m.current(); ok && r.kind != kindHeader {
 			if err := action.Kill(r.win, m.opt.Suffix); err != nil {
@@ -635,6 +754,21 @@ func (m *Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, m.previewCmd()
 	}
 	return m, nil
+}
+
+// focusRow puts the cursor back on a window's row after the rows are rebuilt.
+// A no-op when that row is gone, leaving refilter's clamp to decide.
+func (m *Model) focusRow(id string, header bool) {
+	if id == "" {
+		return
+	}
+	for i, vi := range m.view {
+		if r := m.rows[vi]; r.win.ID == id && (r.kind == kindHeader) == header {
+			m.cursor = i
+			m.ensureVisible()
+			return
+		}
+	}
 }
 
 func (m *Model) move(d int) {
@@ -724,6 +858,8 @@ func glyph(st model.Status) string {
 	}
 }
 
+// listWidth is the whole list column, scrollbar gutter included. The preview
+// is sized from what is left of innerW after it.
 func (m *Model) listWidth() int {
 	if m.opt.Preview && m.sideBySide() {
 		return m.innerW()*55/100 - 2
@@ -731,13 +867,23 @@ func (m *Model) listWidth() int {
 	return m.innerW()
 }
 
+// rowWidth is what a row's own content gets: the list column less the gutter.
+func (m *Model) rowWidth() int { return maxInt(20, m.listWidth()-scrollbarCells) }
+
 func (m *Model) renderRow(r row, selected bool) string {
-	lw := m.listWidth()
-	// Leading space keeps the cursor off the frame border. Both variants are
-	// exactly cursorCells wide on screen; the selected one just carries colour.
+	lw := m.rowWidth()
+	// ➤ (U+27A4), an arrowhead rather than the ▸ (U+25B8) triangle a collapsed
+	// session folds with. Different shape, not just a different weight, which
+	// is what keeps the two readable in the one place they meet — a selected,
+	// folded header — along with the two spaces between them.
+	//
+	// Both variants are exactly cursorCells wide on screen; the selected one
+	// just carries colour. Every candidate glyph was checked at 1 cell in tmux
+	// first: an ambiguous-width marker would shift every column on the selected
+	// row and nowhere else.
 	cursor := "   "
 	if selected {
-		cursor = " " + cPrompt.Render("▸ ")
+		cursor = cCursor.Render("➤") + "  "
 	}
 
 	if r.kind == kindHeader {
@@ -780,7 +926,7 @@ func (m *Model) renderRow(r row, selected bool) string {
 	badgeCol := strings.Repeat(" ", maxInt(0, m.badgeW-ansi.StringWidth(badge))) + badge
 	fixed := cursorCells + ansi.StringWidth(indent) + m.badgeW + rightMargin
 	if r.kind == kindPane {
-		fixed += 1 + 1 + 4 // glyph, active marker, four single spaces
+		fixed += 1 + 1 + 5 // glyph, active marker, five single spaces
 	} else {
 		fixed += 1 + 4 + 2 + 5 // glyph, "NNp ", flags, five single spaces
 	}
@@ -795,7 +941,7 @@ func (m *Model) renderRow(r row, selected bool) string {
 		pathW = 8
 	}
 
-	var label, name, extra string
+	var label, name string
 	if r.kind == kindPane {
 		// In the tree the session is already on the header, so a pane row shows
 		// only its own coordinates.
@@ -804,10 +950,16 @@ func (m *Model) renderRow(r row, selected bool) string {
 			label = r.win.Session + ":" + label
 		}
 		name = strings.TrimSpace(r.pane.Cmd)
+
+		// The active-pane marker gets a column of its own, reserved on every
+		// pane row. Rendered flush against the glyph it read as one smudged
+		// symbol, and appearing only on the active row it shifted that row's
+		// every other column one cell right of its neighbours'.
+		marker := " "
 		if r.pane.Active {
-			extra = "*"
+			marker = cFlag.Render("*")
 		}
-		return truncateANSI(cursor+cDim.Render(indent)+glyph(r.status)+extra+" "+
+		return truncateANSI(cursor+cDim.Render(indent)+glyph(r.status)+" "+marker+" "+
 			pad(label, labelW)+" "+cName.Render(pad(name, nameW))+" "+
 			cDim.Render(pad(padLeft(tilde(r.pane.Path), pathW), pathW))+" "+
 			badgeCol, lw)
@@ -873,18 +1025,25 @@ func (m *Model) View() string {
 	lines := make([]string, 0, h)
 	for i := m.offset; i < len(m.view) && i < m.offset+h; i++ {
 		r := m.rows[m.view[i]]
-		line := padToWidth(m.renderRow(r, i == m.cursor), m.listWidth())
+		line := padToWidth(m.renderRow(r, i == m.cursor), m.rowWidth())
 		if i == m.cursor {
 			line = cSel.Render(line)
 		}
 		lines = append(lines, line)
 	}
 	if len(lines) == 0 {
-		lines = append(lines, cDim.Render(padToWidth("  no matches", m.listWidth())))
+		// An empty list with no query typed is the filter's doing, not the
+		// query's — say which, or it reads as "you have no sessions".
+		msg := "  no matches"
+		if m.opt.HideDetached && strings.TrimSpace(m.query) == "" {
+			msg = "  nothing attached — ^e shows detached sessions"
+		}
+		lines = append(lines, cDim.Render(padToWidth(msg, m.rowWidth())))
 	}
 	for len(lines) < h {
-		lines = append(lines, strings.Repeat(" ", m.listWidth()))
+		lines = append(lines, strings.Repeat(" ", m.rowWidth()))
 	}
+	lines = withScrollbar(lines, m.rowWidth(), len(m.view), m.offset)
 	list := strings.Join(lines, "\n")
 
 	// ── body: list, optionally beside the preview ─────────────────────────
@@ -970,13 +1129,6 @@ func countSelectable(rows []row) int {
 
 func maxInt(a, b int) int {
 	if a > b {
-		return a
-	}
-	return b
-}
-
-func minInt(a, b int) int {
-	if a < b {
 		return a
 	}
 	return b

@@ -11,7 +11,8 @@ import (
 	"github.com/dsaad68/kaku-tab/internal/tmux"
 )
 
-// TitleFormat placeholders:
+// DefaultTitleFormat is the tab title template used when @kaku-tab-title-format
+// is unset. Placeholders:
 //
 //	%s  session name (a satellite keeps its own name)
 //	%g  base session name, with any satellite suffix stripped

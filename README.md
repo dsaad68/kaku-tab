@@ -18,7 +18,7 @@ Works with [Kaku](https://github.com/tw93/Kaku) and [WezTerm](https://wezterm.or
 ╭── tmux ⇄ kaku ──────────────────────────────────────────────────────────────────╮
 │  kaku-tab ❯                                                                17/17 │
 ├──────────────────────────────────────────────────────────────────────────────────┤
-│ ▸ ▾ api  3 windows  ⟦kaku 15⟧                                                    │
+│➤  ▾ api  3 windows  ⟦kaku 15⟧                                                    │
 │    ├ ◍ 1              nvim         2p    ~/src/api                  ⟦hidden 15⟧ │
 │    ├ ◍ 2              zsh          2p    ~/src/api/cmd              ⟦hidden 15⟧ │
 │    └ ● 3              just         2p !  ~/src/api                    ⟦kaku 15⟧ │
@@ -29,7 +29,7 @@ Works with [Kaku](https://github.com/tw93/Kaku) and [WezTerm](https://wezterm.or
 │    └ ○ 2              htop         1p    ~                          ⟦ new tab ⟧ │
 │                                                                                  │
 │  enter switch · ^/ show preview · ^t new tab · tab fold (S-tab all) · ^p panes   │
-│  ^r rename · ^x kill · ^d detach · ^u clear                                      │
+│  ^e hide detached · ^r rename · ^x kill · ^d detach · ^u clear                   │
 ╰──────────────────────────────────────────────────────────────────────────────────╯
 ```
 
@@ -72,6 +72,16 @@ set -g @plugin 'dsaad68/kaku-tab'
 Then <kbd>prefix</kbd>+<kbd>I</kbd>. The plugin builds its binary on first load
 if Go is available.
 
+### Homebrew
+
+```sh
+brew install --cask dsaad68/tap/kaku-tab
+```
+
+That installs the binary only; tmux still needs the plugin entry point, so pair
+it with the TPM line above or a checkout. Nothing gets built — the plugin finds
+`kaku-tab` on `PATH`.
+
 ### Manual
 
 ```sh
@@ -100,11 +110,14 @@ and press <kbd>Alt</kbd>+<kbd>L</kbd>.
 
 | Key | Action |
 |---|---|
+| <kbd>↑</kbd> <kbd>↓</kbd> | move (<kbd>Ctrl</kbd>+<kbd>K</kbd> / <kbd>Ctrl</kbd>+<kbd>J</kbd> too) |
+| <kbd>PgUp</kbd> <kbd>PgDn</kbd> <kbd>Home</kbd> <kbd>End</kbd> | move by a screenful, or to either end |
 | <kbd>Enter</kbd> | switch to that window, reusing the session's existing tab |
 | <kbd>Ctrl</kbd>+<kbd>T</kbd> | force a **new** tab, so two windows of one session show at once |
 | <kbd>Tab</kbd> | fold/unfold a session (works from a child row too) |
 | <kbd>Shift</kbd>+<kbd>Tab</kbd> | fold or unfold every session |
 | <kbd>Ctrl</kbd>+<kbd>P</kbd> | toggle window ⇄ pane rows |
+| <kbd>Ctrl</kbd>+<kbd>E</kbd> | hide/show detached sessions — leaves only what's on screen |
 | <kbd>Ctrl</kbd>+<kbd>/</kbd> | show/hide the preview — the popup resizes with it |
 | <kbd>Ctrl</kbd>+<kbd>R</kbd> | rename: the **window** on a child row, the **session** on a header |
 | <kbd>Ctrl</kbd>+<kbd>X</kbd> | kill window |
@@ -114,6 +127,17 @@ and press <kbd>Alt</kbd>+<kbd>L</kbd>.
 
 Typing filters. A session header matches on behalf of its windows, so `api`
 shows the session *and* everything under it.
+
+When there are more rows than fit, a scrollbar appears down the right edge —
+otherwise a list that continues below the frame looks exactly like one that
+ends there. <kbd>Shift</kbd>+<kbd>Tab</kbd> folds every session, and
+<kbd>Ctrl</kbd>+<kbd>E</kbd> drops the detached ones, which are usually the
+faster ways to get a long list back onto one screen.
+
+<kbd>Ctrl</kbd>+<kbd>E</kbd> is a per-invocation toggle: it resets each time you
+open the picker, because a filter that quietly persisted would one day hide half
+your sessions with nothing on screen to say why. Set
+`@kaku-tab-detached 'off'` if you want it on by default.
 
 ### Enter vs Ctrl-T
 
@@ -138,8 +162,15 @@ Every option, with defaults, is in
 set -g @kaku-tab-key        'M-l'    # picker binding
 set -g @kaku-tab-search-key 'M-p'    # optional: scrollback search
 set -g @kaku-tab-preview    'off'    # ^/ toggles it
+set -g @kaku-tab-sort       'tabs'   # or 'mru' / 'name'
+set -g @kaku-tab-detached   'on'     # 'off' starts with detached hidden; ^e toggles
 set -g @kaku-tab-ignore     'popup'  # sessions to hide, comma-separated
 ```
+
+With `@kaku-tab-sort 'mru'` the list is ordered by what you most recently
+switched to, and the window you are in now is pushed one place down — so
+<kbd>Alt</kbd>+<kbd>L</kbd> <kbd>Enter</kbd> toggles back to where you just
+were, alt-tab style.
 
 ## Scrollback search
 
@@ -172,9 +203,11 @@ brings the sessions back, this brings the tabs back.
 ## Development
 
 ```sh
-make build    # bin/kaku-tab
-make test     # go vet + go test
-make lint     # gofmt + vet
+make build             # bin/kaku-tab
+make test              # go vet + go test
+make lint              # golangci-lint, same config as CI
+make cover             # tests + the thresholds in .testcoverage.yml
+make release-snapshot  # build the release artifacts, publish nothing
 ```
 
 Tests run against recorded fixtures — no tmux server or terminal required.
