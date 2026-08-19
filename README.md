@@ -126,6 +126,7 @@ and press <kbd>Alt</kbd>+<kbd>L</kbd>.
 | <kbd>Shift</kbd>+<kbd>Tab</kbd> | fold or unfold every session |
 | <kbd>Ctrl</kbd>+<kbd>P</kbd> | toggle window ⇄ pane rows |
 | <kbd>Ctrl</kbd>+<kbd>E</kbd> | hide/show detached sessions — leaves only what's on screen |
+| <kbd>Ctrl</kbd>+<kbd>A</kbd> | show only windows where an agent is waiting on you |
 | <kbd>Ctrl</kbd>+<kbd>/</kbd> | show/hide the preview — the popup resizes with it |
 | <kbd>Ctrl</kbd>+<kbd>R</kbd> | rename: the **window** on a child row, the **session** on a header |
 | <kbd>Ctrl</kbd>+<kbd>X</kbd> | kill window |
@@ -180,6 +181,31 @@ switched to, and the window you are in now is pushed one place down — so
 <kbd>Alt</kbd>+<kbd>L</kbd> <kbd>Enter</kbd> toggles back to where you just
 were, alt-tab style.
 
+## Agents
+
+Claude Code and Devin CLI sessions show up as a column in the picker — which
+pane, which agent, and whether it is working, blocked on a permission prompt,
+asking you something, finished, or failed — plus a counter on the right of the
+tmux status bar.
+
+```sh
+kaku-tab install-hooks           # one block in ~/.claude/settings.json, both CLIs
+```
+
+```tmux
+set -g @kaku-tab-agents 'on'
+set -g status-interval  5
+```
+
+The agents report themselves: each CLI's lifecycle hooks run `kaku-tab hook`,
+which records the state on the pane it inherited via `$TMUX_PANE`. Nothing is
+guessed from the process table — `#{pane_current_command}` says `node` for
+Claude Code, and no process name can tell "thinking" from "waiting on you".
+
+Because the state lives in a tmux pane option, it rides in on the `list-panes`
+query the picker already makes, and it disappears with the pane. See
+[docs/agents.md](docs/agents.md).
+
 ## Scrollback search
 
 Set `@kaku-tab-search-key` to get a live grep over every pane's scrollback in
@@ -196,6 +222,8 @@ kaku-tab resolve                  # print the window ⇄ tab join (debugging)
 kaku-tab restore [--windows]      # open a tab per detached session
 kaku-tab prune                    # reap orphaned satellite sessions
 kaku-tab titles [--dry-run]       # retitle tabs after their tmux window
+kaku-tab agents                   # which pane each Claude Code / Devin session is in
+kaku-tab install-hooks            # register the agent hooks with both CLIs
 ```
 
 `restore` pairs well with
@@ -205,6 +233,7 @@ brings the sessions back, this brings the tabs back.
 ## Docs
 
 - [Design](docs/design.md) — how the join works, and why grouped sessions
+- [Agents](docs/agents.md) — Claude Code / Devin CLI state in the picker and status bar
 - [Configuration](docs/configuration.md) — every option
 - [Troubleshooting](docs/troubleshooting.md)
 

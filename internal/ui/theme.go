@@ -20,6 +20,7 @@ var (
 	colName   = lipgloss.AdaptiveColor{Light: "#3B5BDB", Dark: "#7AA2F7"}
 	colGroup  = lipgloss.AdaptiveColor{Light: "#6F42C1", Dark: "#BB9AF7"}
 	colPink   = lipgloss.AdaptiveColor{Light: "#BF3989", Dark: "#F7768E"}
+	colRed    = lipgloss.AdaptiveColor{Light: "#B42318", Dark: "#FF7A93"}
 	colSelBg  = lipgloss.AdaptiveColor{Light: "#DDE7F5", Dark: "#283457"}
 	colBorder = lipgloss.AdaptiveColor{Light: "#B8BFC7", Dark: "#3B4261"}
 )
@@ -42,6 +43,17 @@ var (
 	cTitle    = lipgloss.NewStyle().Foreground(colAccent).Bold(true)
 	cKey      = lipgloss.NewStyle().Foreground(colText).Bold(true)
 	cText     = lipgloss.NewStyle().Foreground(colText)
+)
+
+// The agent column encodes the agent in a letter and its state in the colour,
+// so one cell carries both. Amber and pink are the two "wants you now" states;
+// blue is merely working and must stay quiet enough to ignore.
+var (
+	cAgentPerm = lipgloss.NewStyle().Foreground(colAmber).Bold(true)
+	cAgentAsk  = lipgloss.NewStyle().Foreground(colPink).Bold(true)
+	cAgentErr  = lipgloss.NewStyle().Foreground(colRed).Bold(true)
+	cAgentDone = lipgloss.NewStyle().Foreground(colGreen).Bold(true)
+	cAgentBusy = lipgloss.NewStyle().Foreground(colAccent)
 )
 
 // frame draws a rounded box with a title set into the top border.

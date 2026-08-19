@@ -62,6 +62,27 @@ if [ "$TITLES" = "on" ]; then
   "$BIN" titles >/dev/null 2>&1 &
 fi
 
+# Agent counter on the right of the status bar. Opt-in: it appends to
+# status-right, which most people compose by hand.
+#
+# The command prints nothing when no agent is running, so the status bar shows no
+# stray icon or separator the rest of the time — which is why this is a plain
+# #() emitting its own #[fg=...] styling rather than a themed status module.
+#
+# Refresh has two halves. status-interval is only the ceiling on staleness; the
+# `hook` subcommand calls refresh-client -S on every attached client the moment
+# an agent changes state, which is what makes the counter feel immediate. Set
+# `status-interval` to 5 or so for the backstop.
+#
+# The guard makes a config reload idempotent: appending unconditionally would
+# stack a second copy of the segment every time this file is sourced.
+if [ "$(opt @kaku-tab-agents 'off')" = "on" ]; then
+  case "$(tmux show-option -gv status-right 2>/dev/null)" in
+    *"agents --format tmux"*) ;;
+    *) tmux set-option -ag status-right "#($BIN agents --format tmux)" ;;
+  esac
+fi
+
 # No hook is registered for pruning satellite sessions. `set-hook -ga` appends a
 # fresh copy on every config reload and tmux offers no way to remove one by
 # content, so it would accumulate duplicates. The picker prunes on every

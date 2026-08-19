@@ -24,6 +24,10 @@ a ratchet set just under the current numbers: if a change drops
 clients and windows on the **tty**. Everything else is presentation or plumbing
 around the table it produces. Read [docs/design.md](docs/design.md) first.
 
+`internal/agent` is the second, smaller story: Claude Code / Devin CLI publish
+their state into a tmux pane option via `kaku-tab hook`, and it rides back in on
+the `list-panes` query resolve already makes. See [docs/agents.md](docs/agents.md).
+
 ## Invariants (all previously broken here; tests pin them)
 
 - Measure **display cells**, not bytes or runes. Use `ansi.StringWidth` for
@@ -33,11 +37,18 @@ around the table it produces. Read [docs/design.md](docs/design.md) first.
   ambiguous once a grouped session shares the window.
 - Never `set-hook -g` — it replaces the user's hooks. Use `-ga`.
 - Never key on `$WEZTERM_PANE`; it goes stale. Join on the tty.
+- Agent state (`@kt_agent`) is set with `set-option -p` only. tmux pane options
+  inherit from window options, so one window-scoped write has every agent-free
+  pane in that window report an agent. The rollup is a separate option name.
+- `kaku-tab hook` must never print to stdout or exit non-zero. On
+  `PermissionRequest` and `PreToolUse` both are decision channels, so a status
+  reporter that got either wrong would silently veto the user's own tool calls.
 
 ## Verifying changes
 
-`kaku-tab resolve` prints the join. To see the TUI without a real popup, run it
-inside a detached tmux session and capture the pane:
+`kaku-tab resolve` prints the join, agent column included. `kaku-tab agents`
+lists agent panes without a tmux server of its own. To see the TUI without a
+real popup, run it inside a detached tmux session and capture the pane:
 
 ```sh
 tmux new-session -d -s ui -x 150 -y 30 "$PWD/bin/kaku-tab pick '' ui"

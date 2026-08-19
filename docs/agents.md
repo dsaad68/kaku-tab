@@ -1,0 +1,157 @@
+# Agents
+
+Which pane is Claude Code or Devin CLI running in, and is it waiting on you.
+
+## Why not just look at the process
+
+`#{pane_current_command}` reports `node` for Claude Code, which is true and
+useless. And even a correct process name cannot tell "thinking" from "blocked on
+a permission prompt" — the difference that decides whether you should be looking
+at that pane right now.
+
+Both CLIs expose lifecycle hooks, and a hook process inherits `$TMUX_PANE` from
+the agent that spawned it. So the agent reports its own pane and its own state,
+and nothing has to be inferred.
+
+## The transport is a tmux pane option
+
+`kaku-tab hook` writes one pane-scoped user option:
+
+```sh
+tmux set-option -p -t "$TMUX_PANE" @kt_agent 'claude:perm:41337:1787137188'
+```
+
+`agent:state:pid:unix_ts`. Colon-separated where the rest of this tool uses
+`\x1f`, because every field here is from a fixed alphabet — two agent names,
+five state names, two integers — so none of them can contain the separator.
+
+Two things fall out of storing it on the pane:
+
+- `tmux list-panes` already runs on every picker invocation. `#{@kt_agent}` is
+  one more field in a format string that was going to be evaluated anyway, so
+  agent awareness costs **no extra process**.
+- **Staleness is structural.** Close the pane and the record goes with it. There
+  is no TTL, no sweeper thread, no directory to watch.
+
+The one case that does not self-heal is an agent killed outright — no
+`SessionEnd` fires, and its pane outlives it. That is what the pid in the record
+is for: a record whose process is gone reads as absent, and `kaku-tab agents`
+clears it.
+
+> **`@kt_agent` is only ever set with `-p`.** From `tmux(1)`: *"Pane options
+> inherit from window options."* Set it at window scope even once and every
+> agent-free pane in that window reads back an agent that is not there. The
+> per-window rollup is deliberately a different option, `@kt_agent_win`.
+
+## States
+
+| State  | Means                | Claude Code                                                          | Devin CLI          |
+|--------|----------------------|----------------------------------------------------------------------|--------------------|
+| `busy` | working              | `SessionStart` `UserPromptSubmit` `PostToolUse` `PostToolBatch`       | same, less the last |
+| `perm` | wants permission     | `Notification:permission_prompt`                                     | `PermissionRequest` |
+| `ask`  | asked you a question | `Notification:elicitation_dialog` / `agent_needs_input`              | —                  |
+| `done` | finished a turn      | `Stop`, `Notification:idle_prompt` / `agent_completed`               | `Stop`             |
+| `err`  | turn failed          | `StopFailure`                                                        | —                  |
+
+`busy` is the only state you do not owe a response to; everything else counts as
+waiting.
+
+Two non-obvious choices:
+
+- **`PostToolUse` earns its place.** It is not a heartbeat — it is what flips a
+  pane out of `perm` once you approve a call and the agent resumes. Without it an
+  approved pane keeps counting as waiting until the turn ends.
+- **`PreToolUse` is not subscribed.** It fires on every tool call, on the agent's
+  hot path, for information `PostToolUse` already carries.
+- **Payloads carrying `agent_id` are ignored.** That field marks a subagent, and
+  a subagent finishing is not your turn ending — otherwise every Task call would
+  flash the pane green mid-turn.
+
+## Installing the hooks
+
+```sh
+kaku-tab install-hooks          # --dry-run to see the merge first
+```
+
+This merges into `~/.claude/settings.json`, keeping every other key and every
+hook you wrote yourself, and backs the old file up to
+`settings.json.kaku-tab.bak`. Restart any running agent session to pick it up.
+
+One file covers both CLIs: Devin CLI treats `~/.claude/settings.json` as one of
+its user-level hook sources, and `kaku-tab hook` tells the two apart from the
+environment (`DEVIN_PROJECT_DIR` vs `CLAUDE_PROJECT_DIR`) rather than from an
+argument. The block is the union of both event sets; each CLI ignores the events
+it does not have.
+
+The command is written in shell form with an explicit `exec`:
+
+```json
+{ "type": "command", "command": "exec '/path/to/kaku-tab' hook" }
+```
+
+Not Claude Code's exec form (`args`), for two reasons. Devin CLI's hook schema
+has no `args` field, so an exec-form entry there would invoke the binary with no
+arguments — and kaku-tab with no arguments opens the picker. And `exec` replaces
+the wrapping shell, which makes the hook's parent the agent itself: that is the
+pid the record stores to know when the agent has died. **Re-run
+`install-hooks` if you move the binary**; the path is absolute.
+
+`kaku-tab hook` is inert by contract. It never writes to stdout and never exits
+non-zero, because on `PermissionRequest` and the `PreToolUse` family stdout is a
+decision channel and a non-zero exit blocks the call — a status reporter that got
+either wrong would start silently vetoing your own tool calls.
+
+## In the picker
+
+An agent column sits between the status glyph and the window index, on window
+rows, pane rows and session headers alike:
+
+- the **letter** is the agent — `C` claude, `D` devin
+- the **colour** is the state — amber `perm`, pink `ask`, red `err`,
+  green `done`, blue `busy`
+
+A window row shows the most actionable agent among its panes, and a session
+header the most actionable among its windows, so a pane blocked three windows
+deep is visible without unfolding anything. Switch to pane mode (<kbd>^p</kbd>)
+for the exact pane.
+
+The column is one cell wide and reserved on every row, agent or not: an
+indicator drawn only where there is an agent would shift every other column on
+those rows and nowhere else.
+
+<kbd>^a</kbd> filters to windows with an agent that wants you — `perm`, `ask`,
+`done` or `err`, but not `busy`. Typing an agent's name in the search box works
+too; the name is part of each row's match text without being drawn.
+
+## The status-bar counter
+
+```tmux
+set -g @kaku-tab-agents 'on'
+set -g status-interval 5
+```
+
+Opt-in, and off by default, because it appends to `status-right` — which most
+people compose by hand. The plugin appends after whatever you have already set,
+so it lands at the far right.
+
+It renders nothing at all when no agent is running, which is why it is a plain
+`#()` emitting its own `#[fg=...]` styling rather than a themed status module: a
+module would still draw its icon and separators around an empty value.
+
+Refresh has two halves. `status-interval` is only the ceiling on staleness — the
+hook calls `refresh-client -S` on every attached client the moment an agent
+changes state, so the count moves as it happens rather than up to five seconds
+later.
+
+For a per-window badge in the window list, `kaku-tab agents --refresh` writes
+`@kt_agent_win` on each window, usable in `window-status-format` as
+`#{@kt_agent_win}`.
+
+## From the shell
+
+```sh
+kaku-tab agents                  # which pane, which agent, what state, how long
+kaku-tab agents --format tmux    # the status segment
+kaku-tab agents --refresh        # write the per-window rollup
+kaku-tab resolve                 # the full join, agent column included
+```

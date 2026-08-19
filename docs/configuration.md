@@ -107,6 +107,32 @@ kaku-tab titles --dry-run
 > If your config already has `set-tab-title` hooks, leave this `off` or remove
 > them first. Both fire on the same events and will fight over the title.
 
+## Agents
+
+A counter on the right of the status bar for the Claude Code and Devin CLI
+sessions running in your panes, and an agent column in the picker. See
+[agents.md](agents.md).
+
+| Option | Default | Meaning |
+|---|---|---|
+| `@kaku-tab-agents` | `off` | append the agent counter to `status-right` |
+
+Off by default because it appends to `status-right`, which most people compose
+by hand. Turning it on is two lines, plus installing the hooks that feed it:
+
+```tmux
+set -g @kaku-tab-agents  'on'
+set -g status-interval   5
+```
+
+```sh
+kaku-tab install-hooks
+```
+
+`status-interval` is only the ceiling on staleness — the hook calls
+`refresh-client -S` the moment an agent changes state, so the count moves as it
+happens.
+
 ## Full example
 
 ```tmux
@@ -117,6 +143,7 @@ set -g @kaku-tab-open-mode      'reuse'
 set -g @kaku-tab-ignore         'popup,scratch'
 set -g @kaku-tab-popup-size     '90%,85%'
 set -g @kaku-tab-popup-size-compact '60%,70%'
+set -g @kaku-tab-agents         'on'
 
 set -g @plugin 'dsaad68/kaku-tab'
 ```

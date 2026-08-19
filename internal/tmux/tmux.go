@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/dsaad68/kaku-tab/internal/agent"
 	"github.com/dsaad68/kaku-tab/internal/model"
 )
 
@@ -103,10 +104,15 @@ func Windows() ([]model.RawWindow, error) {
 }
 
 // Panes returns every pane in the server, keyed by tmux window id.
+//
+// The agent record rides along in this one query rather than in a second pass:
+// @kt_agent is a pane option, so `list-panes` can report it as just another
+// format field, and agent awareness costs no extra process.
 func Panes() (map[string][]model.Pane, error) {
 	rows, err := query("list-panes", "-a", "-F", f(
 		"#{window_id}", "#{pane_id}", "#{pane_index}",
-		"#{pane_current_command}", "#{pane_current_path}", "#{pane_active}"))
+		"#{pane_current_command}", "#{pane_current_path}", "#{pane_active}",
+		"#{"+agent.PaneOption+"}"))
 	if err != nil {
 		return nil, err
 	}
@@ -119,6 +125,7 @@ func Panes() (map[string][]model.Pane, error) {
 		m[w] = append(m[w], model.Pane{
 			ID: at(r, 1), Index: at(r, 2), Cmd: at(r, 3),
 			Path: at(r, 4), Active: boolAt(r, 5),
+			Agent: liveAgent(at(r, 6)),
 		})
 	}
 	return m, nil
@@ -203,6 +210,79 @@ func CapturePane(target string, historyLines int) (string, error) {
 		return "", err
 	}
 	return string(out), nil
+}
+
+// liveAgent parses a pane's agent record and drops it if the agent process is
+// gone. Pane-scoped storage self-cleans when the pane closes, but an agent
+// killed outright inside a surviving pane leaves a record no SessionEnd hook
+// will ever clear, so the display must not believe it. `kaku-tab agents` is
+// what actually removes it from tmux; see PaneAgents.
+func liveAgent(v string) agent.Record {
+	r := agent.Parse(v)
+	if !agent.Live(r) {
+		return agent.Record{}
+	}
+	return r
+}
+
+// PaneAgents returns every pane's agent record verbatim, keyed by pane id, with
+// no liveness filtering — the sweeper needs to see dead records in order to
+// clear them, which is exactly what Panes() hides.
+func PaneAgents() (map[string]agent.Record, error) {
+	rows, err := query("list-panes", "-a", "-F", f("#{pane_id}", "#{"+agent.PaneOption+"}"))
+	if err != nil {
+		return nil, err
+	}
+	m := make(map[string]agent.Record, len(rows))
+	for _, r := range rows {
+		if id := at(r, 0); id != "" {
+			m[id] = agent.Parse(at(r, 1))
+		}
+	}
+	return m, nil
+}
+
+// SetPaneOption writes a pane-scoped option.
+//
+// -p, always. tmux pane options inherit from window options, so writing
+// @kt_agent at window scope would have every agent-free pane in that window
+// read back an agent that is not there.
+func SetPaneOption(pane, name, value string) error {
+	_, err := Run("set-option", "-p", "-t", pane, name, value)
+	return err
+}
+
+// UnsetPaneOption clears a pane-scoped option.
+func UnsetPaneOption(pane, name string) error {
+	_, err := Run("set-option", "-p", "-u", "-t", pane, name)
+	return err
+}
+
+// SetWindowOption writes a window-scoped option. Session-qualified like every
+// other target here.
+func SetWindowOption(session, windowID, name, value string) error {
+	_, err := Run("set-option", "-w", "-t", Target(session, windowID), name, value)
+	return err
+}
+
+// UnsetWindowOption clears a window-scoped option.
+func UnsetWindowOption(session, windowID, name string) error {
+	_, err := Run("set-option", "-w", "-u", "-t", Target(session, windowID), name)
+	return err
+}
+
+// RefreshStatus redraws the status line on every attached client, which is what
+// makes the agent counter update the moment a hook fires rather than at the next
+// status-interval tick. Every client is named explicitly: a bare refresh-client
+// picks one, and this setup routinely has a client per terminal tab.
+func RefreshStatus() {
+	cs, err := Clients()
+	if err != nil {
+		return
+	}
+	for _, c := range cs {
+		_, _ = Run("refresh-client", "-S", "-t", c.TTY)
+	}
 }
 
 // Option reads a global tmux option, returning def when unset.

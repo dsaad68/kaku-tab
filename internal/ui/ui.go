@@ -27,6 +27,7 @@ import (
 	"github.com/sahilm/fuzzy"
 
 	"github.com/dsaad68/kaku-tab/internal/action"
+	"github.com/dsaad68/kaku-tab/internal/agent"
 	"github.com/dsaad68/kaku-tab/internal/kaku"
 	"github.com/dsaad68/kaku-tab/internal/model"
 	"github.com/dsaad68/kaku-tab/internal/mru"
@@ -61,6 +62,7 @@ type row struct {
 	count  int    // header only
 	status model.Status
 	tabID  string
+	agent  agent.Record
 	last   bool // last child of its group -> └
 }
 
@@ -87,6 +89,7 @@ type State struct {
 	Preview      bool            `json:"preview"`
 	PaneMode     bool            `json:"pane_mode"`
 	HideDetached bool            `json:"hide_detached"`
+	AgentsOnly   bool            `json:"agents_only"`
 	Collapse     map[string]bool `json:"collapse"`
 }
 
@@ -106,6 +109,12 @@ type Options struct {
 
 	// HideDetached drops sessions with no terminal tab from the list.
 	HideDetached bool
+
+	// AgentsOnly narrows the list to windows holding an agent that wants you —
+	// blocked on permission, asking a question, finished, or failed. A window
+	// whose agent is merely working is not one of them: the point of the filter
+	// is "what is waiting on me", not "where are the agents".
+	AgentsOnly bool
 }
 
 type previewMsg struct {
@@ -170,7 +179,8 @@ func (m *Model) State() State {
 	return State{
 		Query: m.query, Cursor: m.cursor, Offset: m.offset,
 		Preview: m.opt.Preview, PaneMode: m.opt.PaneMode,
-		HideDetached: m.opt.HideDetached, Collapse: m.collapse,
+		HideDetached: m.opt.HideDetached, AgentsOnly: m.opt.AgentsOnly,
+		Collapse: m.collapse,
 	}
 }
 
@@ -191,6 +201,18 @@ func (m *Model) build() {
 				windows = append(windows, w)
 			}
 		}
+	}
+	// Applied after HideDetached, not instead of it: a detached session is
+	// exactly where an agent is most likely to have finished unnoticed, so this
+	// filter must be able to surface one.
+	if m.opt.AgentsOnly {
+		kept := make([]model.Window, 0, len(windows))
+		for _, w := range windows {
+			if w.Agent.Attention() {
+				kept = append(kept, w)
+			}
+		}
+		windows = kept
 	}
 
 	groups := map[string][]model.Window{}
@@ -260,6 +282,7 @@ func (m *Model) build() {
 		// Header inherits the best status among its children, so a session
 		// whose tab is showing something reads as attached at a glance.
 		hstat, htab := model.Detached, ""
+		hagents := make([]agent.Record, 0, len(ws))
 		n := 0
 		for _, w := range ws {
 			if m.opt.PaneMode {
@@ -267,6 +290,7 @@ func (m *Model) build() {
 			} else {
 				n++
 			}
+			hagents = append(hagents, w.Agent)
 			if w.Status > hstat {
 				hstat, htab = w.Status, w.TabID
 			} else if htab == "" && w.TabID != "" {
@@ -276,7 +300,7 @@ func (m *Model) build() {
 		if m.opt.Tree {
 			m.rows = append(m.rows, row{
 				kind: kindHeader, group: g, search: g, count: n,
-				status: hstat, tabID: htab,
+				status: hstat, tabID: htab, agent: agent.Best(hagents),
 				win: pickHeaderWindow(ws, m.opt.Sort == SortMRU),
 			})
 		}
@@ -285,8 +309,8 @@ func (m *Model) build() {
 				for j, p := range w.Panes_ {
 					m.rows = append(m.rows, row{
 						kind: kindPane, group: g, win: w, pane: p,
-						search: strings.Join([]string{w.Session, w.Index, p.Index, p.Cmd, p.Path}, " "),
-						status: w.Status, tabID: w.TabID,
+						search: strings.Join([]string{w.Session, w.Index, p.Index, p.Cmd, p.Path, p.Agent.Agent}, " "),
+						status: w.Status, tabID: w.TabID, agent: p.Agent,
 						last: j == len(w.Panes_)-1,
 					})
 				}
@@ -294,8 +318,10 @@ func (m *Model) build() {
 			}
 			m.rows = append(m.rows, row{
 				kind: kindWindow, group: g, win: w,
-				search: strings.Join([]string{w.Session, w.Index, w.Name, w.Path}, " "),
-				status: w.Status, tabID: w.TabID,
+				// The agent name joins the search text so typing "claude"
+				// narrows to agent windows; it is never rendered as text.
+				search: strings.Join([]string{w.Session, w.Index, w.Name, w.Path, w.Agent.Agent}, " "),
+				status: w.Status, tabID: w.TabID, agent: w.Agent,
 				last: i == len(ws)-1,
 			})
 		}
@@ -440,10 +466,14 @@ func (m *Model) helpPairs() [][2]string {
 	if m.opt.HideDetached {
 		detached = "show detached"
 	}
+	agents := "waiting agents"
+	if m.opt.AgentsOnly {
+		agents = "all windows"
+	}
 	pairs := [][2]string{
 		{"enter", "switch"}, {"^/", preview}, {"^t", "new tab"}, {"tab", "fold"},
-		{"^p", "panes"}, {"^e", detached}, {"^r", "rename"}, {"^x", "kill"},
-		{"^d", "detach"}, {"^u", "clear"},
+		{"^p", "panes"}, {"^e", detached}, {"^a", agents}, {"^r", "rename"},
+		{"^x", "kill"}, {"^d", "detach"}, {"^u", "clear"},
 	}
 	if m.opt.Tree {
 		pairs[3] = [2]string{"tab", "fold (S-tab all)"}
@@ -694,6 +724,24 @@ func (m *Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.focusRow(keepID, keepHeader)
 		return m, m.previewCmd()
 
+	case "ctrl+a":
+		keepID, keepHeader := "", false
+		if r, ok := m.current(); ok {
+			keepID, keepHeader = r.win.ID, r.kind == kindHeader
+		}
+		m.opt.AgentsOnly = !m.opt.AgentsOnly
+		m.build()
+		m.focusRow(keepID, keepHeader)
+		// Cleared on the way out too: left standing, the message would still be
+		// in the footer after the filter was toggled back off and the full list
+		// restored, which reads as a warning about the list you are looking at.
+		m.status = ""
+		if m.opt.AgentsOnly && len(m.view) == 0 {
+			// An empty list after a filter reads as a broken picker. Say why.
+			m.status = "no agent is waiting on you"
+		}
+		return m, m.previewCmd()
+
 	case "ctrl+x":
 		if r, ok := m.current(); ok && r.kind != kindHeader {
 			if err := action.Kill(r.win, m.opt.Suffix); err != nil {
@@ -847,6 +895,29 @@ func (m *Model) badge(st model.Status, tab string, isHeader bool) string {
 	}
 }
 
+// agentCell renders the agent column: the agent's letter coloured by its state,
+// or a blank. Exactly one display cell either way — the column is reserved on
+// every row, so an indicator that appeared only on agent rows would shift every
+// other column on those rows and nowhere else.
+func agentCell(r agent.Record) string {
+	letter := r.Letter()
+	if letter == "" {
+		return " "
+	}
+	switch r.State {
+	case agent.Perm:
+		return cAgentPerm.Render(letter)
+	case agent.Ask:
+		return cAgentAsk.Render(letter)
+	case agent.Err:
+		return cAgentErr.Render(letter)
+	case agent.Done:
+		return cAgentDone.Render(letter)
+	default:
+		return cAgentBusy.Render(letter)
+	}
+}
+
 func glyph(st model.Status) string {
 	switch st {
 	case model.Visible:
@@ -899,7 +970,8 @@ func (m *Model) renderRow(r row, selected bool) string {
 			unit = strings.TrimSuffix(unit, "s")
 		}
 		line := cursor + cGroup.Render(arrow+" "+r.group) + "  " +
-			cDim.Render(fmt.Sprintf("%d %s", r.count, unit)) + "  " + m.badge(r.status, r.tabID, true)
+			cDim.Render(fmt.Sprintf("%d %s", r.count, unit)) + "  " +
+			agentCell(r.agent) + " " + m.badge(r.status, r.tabID, true)
 		return truncateANSI(line, lw)
 	}
 
@@ -926,9 +998,9 @@ func (m *Model) renderRow(r row, selected bool) string {
 	badgeCol := strings.Repeat(" ", maxInt(0, m.badgeW-ansi.StringWidth(badge))) + badge
 	fixed := cursorCells + ansi.StringWidth(indent) + m.badgeW + rightMargin
 	if r.kind == kindPane {
-		fixed += 1 + 1 + 5 // glyph, active marker, five single spaces
+		fixed += 1 + 1 + 1 + 6 // glyph, active marker, agent, six single spaces
 	} else {
-		fixed += 1 + 4 + 2 + 5 // glyph, "NNp ", flags, five single spaces
+		fixed += 1 + 1 + 4 + 2 + 6 // glyph, agent, "NNp ", flags, six single spaces
 	}
 	avail := lw - fixed
 	if avail < 20 {
@@ -960,6 +1032,7 @@ func (m *Model) renderRow(r row, selected bool) string {
 			marker = cFlag.Render("*")
 		}
 		return truncateANSI(cursor+cDim.Render(indent)+glyph(r.status)+" "+marker+" "+
+			agentCell(r.agent)+" "+
 			pad(label, labelW)+" "+cName.Render(pad(name, nameW))+" "+
 			cDim.Render(pad(padLeft(tilde(r.pane.Path), pathW), pathW))+" "+
 			badgeCol, lw)
@@ -979,6 +1052,7 @@ func (m *Model) renderRow(r row, selected bool) string {
 	}
 
 	line := cursor + cDim.Render(indent) + glyph(r.status) + " " +
+		agentCell(r.agent) + " " +
 		pad(label, labelW) + " " +
 		cName.Render(pad(name, nameW)) + " " +
 		fmt.Sprintf("%2dp ", r.win.Panes) + cFlag.Render(pad(flags, 2)) + " " +
