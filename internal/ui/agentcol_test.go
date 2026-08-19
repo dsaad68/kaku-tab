@@ -34,17 +34,32 @@ func agentSample() []model.Window {
 // The agent column is reserved on every row, agent or not. An indicator drawn
 // only where there is an agent would shift every other column on those rows and
 // nowhere else — the same class of bug the badge column was built to avoid.
-func TestAgentCellIsAlwaysOneCell(t *testing.T) {
+func TestAgentCellIsAlwaysAgentCellsWide(t *testing.T) {
 	for _, r := range []agent.Record{
 		{},
-		{Agent: agent.Claude, State: agent.Perm, PID: 1},
-		{Agent: agent.Claude, State: agent.Ask, PID: 1},
-		{Agent: agent.Claude, State: agent.Done, PID: 1},
-		{Agent: agent.Claude, State: agent.Err, PID: 1},
-		{Agent: agent.Devin, State: agent.Busy, PID: 1},
+		{Agent: agent.Claude, State: agent.Perm, PID: 2},
+		{Agent: agent.Claude, State: agent.Ask, PID: 2},
+		{Agent: agent.Claude, State: agent.Done, PID: 2},
+		{Agent: agent.Claude, State: agent.Err, PID: 2},
+		{Agent: agent.Claude, State: agent.Busy, PID: 2},
+		{Agent: agent.Devin, State: agent.Perm, PID: 2},
+		{Agent: agent.Devin, State: agent.Busy, PID: 2},
 	} {
-		if w := ansi.StringWidth(agentCell(r)); w != 1 {
-			t.Errorf("agentCell(%+v) is %d cells, want 1", r, w)
+		if w := ansi.StringWidth(agentCell(r)); w != agentCells {
+			t.Errorf("agentCell(%+v) is %d cells, want %d", r, w, agentCells)
+		}
+	}
+}
+
+// Every glyph in the column must be exactly one cell. A double-width one would
+// still satisfy the total above by luck of pairing, and then break the moment
+// it appeared next to a different partner.
+func TestEveryAgentGlyphIsOneCell(t *testing.T) {
+	for _, g := range []string{
+		glyphClaude, glyphDevin, glyphPerm, glyphAsk, glyphDone, glyphErr, glyphBusy,
+	} {
+		if w := ansi.StringWidth(g); w != 1 {
+			t.Errorf("glyph %q is %d cells, want 1", g, w)
 		}
 	}
 }
@@ -74,20 +89,24 @@ func TestAgentColumnKeepsRowsInBudget(t *testing.T) {
 	}
 }
 
-func TestAgentLetterRendered(t *testing.T) {
+// The two halves are independent: the shape says which agent, the shape beside
+// it says what it wants. Neither may be inferable only from the other's colour.
+func TestAgentAndStateAreBothShown(t *testing.T) {
 	m := New(agentSample(), Options{Tree: true, SelfTab: "8"})
 	m.width, m.height = 150, 30
-	var claude, devin bool
+	var sawClaudePerm, sawDevinBusy bool
 	for _, r := range m.rows {
-		switch ansi.Strip(agentCell(r.agent)) {
-		case "C":
-			claude = true
-		case "D":
-			devin = true
+		cell := ansi.Strip(agentCell(r.agent))
+		if cell == glyphClaude+glyphPerm {
+			sawClaudePerm = true
+		}
+		if cell == glyphDevin+glyphBusy {
+			sawDevinBusy = true
 		}
 	}
-	if !claude || !devin {
-		t.Errorf("expected both agent letters in the table (claude=%v devin=%v)", claude, devin)
+	if !sawClaudePerm || !sawDevinBusy {
+		t.Errorf("expected both agent/state pairs (claude+perm=%v devin+busy=%v)",
+			sawClaudePerm, sawDevinBusy)
 	}
 }
 

@@ -45,15 +45,33 @@ var (
 	cText     = lipgloss.NewStyle().Foreground(colText)
 )
 
-// The agent column encodes the agent in a letter and its state in the colour,
-// so one cell carries both. Amber and pink are the two "wants you now" states;
-// blue is merely working and must stay quiet enough to ignore.
+// The agent column is two cells: which agent, then what it wants. Splitting
+// them means neither has to be inferred from the other's colour — the shape
+// says claude or devin, and the shape beside it says blocked, asking, done or
+// failed.
+//
+// Identity takes mauve and cyan, which no state uses, so the two halves never
+// read as one gradient. `busy` is deliberately the only muted state: it is the
+// one thing here you do not owe a response to, and a column that shouted on
+// every working agent would train you to ignore it.
+const (
+	glyphClaude = "\uf069"     // nf-fa-asterisk, for Claude Code's mark
+	glyphDevin  = "\U000f06a9" // nf-md-robot
+	glyphPerm   = "\uf0f3"     // bell: blocked asking permission
+	glyphAsk    = "\uf059"     // question: blocked on a question
+	glyphDone   = "\uf00c"     // check: finished a turn
+	glyphErr    = "\uf071"     // warning: the turn failed
+	glyphBusy   = "\U000f051f" // timer-sand: working, nothing owed
+)
+
 var (
+	cIDClaude  = lipgloss.NewStyle().Foreground(colGroup)
+	cIDDevin   = lipgloss.NewStyle().Foreground(colAccent)
 	cAgentPerm = lipgloss.NewStyle().Foreground(colAmber).Bold(true)
 	cAgentAsk  = lipgloss.NewStyle().Foreground(colPink).Bold(true)
 	cAgentErr  = lipgloss.NewStyle().Foreground(colRed).Bold(true)
 	cAgentDone = lipgloss.NewStyle().Foreground(colGreen).Bold(true)
-	cAgentBusy = lipgloss.NewStyle().Foreground(colAccent)
+	cAgentBusy = lipgloss.NewStyle().Foreground(colMuted)
 )
 
 // frame draws a rounded box with a title set into the top border.

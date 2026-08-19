@@ -183,10 +183,14 @@ were, alt-tab style.
 
 ## Agents
 
-Claude Code and Devin CLI sessions show up as a column in the picker — which
-pane, which agent, and whether it is working, blocked on a permission prompt,
-asking you something, finished, or failed — plus a counter on the right of the
-tmux status bar.
+Claude Code and Devin CLI sessions show up as a column in the picker — one glyph
+for which agent, one for what it wants: working, blocked on a permission prompt,
+asking you something, finished, or failed. The tmux status bar gets two counters
+at the far right: how many agents are open, and how many of them want you.
+
+```
+ 󰚩 3   󰂚 1
+```
 
 ```sh
 kaku-tab install-hooks           # one block in ~/.claude/settings.json, both CLIs

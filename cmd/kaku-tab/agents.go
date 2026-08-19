@@ -70,25 +70,15 @@ func hook() error {
 	return nil
 }
 
-// counts is the tally the status segment renders.
-type counts struct {
-	waiting int // perm + ask: blocked on you right now
-	done    int
-	failed  int
-	working int
-}
-
-func (c counts) empty() bool { return c.waiting+c.done+c.failed+c.working == 0 }
-
 // sweep reads every pane's record, clearing any whose agent process is gone.
 // This is the one case pane-scoped storage cannot self-heal: an agent killed
 // outright never fires SessionEnd, and its pane outlives it.
-func sweep() (counts, error) {
+func sweep() (agent.Counts, error) {
 	byPane, err := tmux.PaneAgents()
 	if err != nil {
-		return counts{}, err
+		return agent.Counts{}, err
 	}
-	var c counts
+	live := make([]agent.Record, 0, len(byPane))
 	for pane, r := range byPane {
 		if r.Empty() {
 			continue
@@ -97,40 +87,42 @@ func sweep() (counts, error) {
 			_ = tmux.UnsetPaneOption(pane, agent.PaneOption)
 			continue
 		}
-		switch r.State {
-		case agent.Perm, agent.Ask:
-			c.waiting++
-		case agent.Done:
-			c.done++
-		case agent.Err:
-			c.failed++
-		default:
-			c.working++
-		}
+		live = append(live, r)
 	}
-	return c, nil
+	return agent.Tally(live), nil
 }
 
-// segment renders the status-right counter.
+// loadTheme resolves the status-bar palette from tmux in one pass.
 //
-// It carries its own styling and returns "" when nothing is running, so the
-// status bar shows no empty brackets or stray separator when there is no agent
-// — which is most of the time, and the reason it is not a catppuccin module.
-func segment(c counts) string {
-	if c.empty() {
-		return ""
-	}
-	var parts []string
-	add := func(n int, colour, icon string) {
-		if n > 0 {
-			parts = append(parts, fmt.Sprintf("#[fg=%s]%s %d#[default]", colour, icon, n))
+// Every value falls back twice: to the catppuccin palette when it is loaded,
+// then to a plain terminal colour name when it is not — so the segment is
+// themed without depending on a theme being installed.
+func loadTheme() agent.Theme {
+	o := tmux.Options(
+		"@catppuccin_status_left_separator", "@thm_crust", "@thm_fg",
+		"@catppuccin_status_module_text_bg", "@thm_mauve", "@thm_peach",
+		"@thm_surface_2", "@kaku-tab-agent-color", "@kaku-tab-notify-color",
+		"@kaku-tab-agent-icon", "@kaku-tab-notify-icon",
+	)
+	pick := func(def string, keys ...string) string {
+		for _, k := range keys {
+			if v := o[k]; v != "" {
+				return v
+			}
 		}
+		return def
 	}
-	add(c.waiting, "yellow", "") // bell: wants a decision from you
-	add(c.failed, "red", "")
-	add(c.done, "green", "")
-	add(c.working, "blue", "")
-	return strings.Join(parts, " ")
+	return agent.Theme{
+		Sep:      o["@catppuccin_status_left_separator"],
+		IconFG:   pick("black", "@thm_crust"),
+		TextFG:   pick("white", "@thm_fg"),
+		TextBG:   pick("brightblack", "@catppuccin_status_module_text_bg"),
+		AgentBG:  pick("magenta", "@kaku-tab-agent-color", "@thm_mauve"),
+		NotifyBG: pick("yellow", "@kaku-tab-notify-color", "@thm_peach"),
+		IdleBG:   pick("brightblack", "@thm_surface_2"),
+		AgentIco: pick(agent.IconAgents, "@kaku-tab-agent-icon"),
+		NotifIco: pick(agent.IconNotify, "@kaku-tab-notify-icon"),
+	}
 }
 
 // refreshWindows writes the per-window rollup for use in tmux window formats.
@@ -188,7 +180,7 @@ func agents(args []string) error {
 		}
 	}
 	if format == "tmux" {
-		if s := segment(c); s != "" {
+		if s := loadTheme().Segment(c); s != "" {
 			fmt.Println(s)
 		}
 		return nil

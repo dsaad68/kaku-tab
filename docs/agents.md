@@ -103,21 +103,32 @@ either wrong would start silently vetoing your own tool calls.
 
 ## In the picker
 
-An agent column sits between the status glyph and the window index, on window
-rows, pane rows and session headers alike:
+Two cells sit between the status glyph and the window index. The first says
+*which* agent, the second says what it wants:
 
-- the **letter** is the agent — `C` claude, `D` devin
-- the **colour** is the state — amber `perm`, pink `ask`, red `err`,
-  green `done`, blue `busy`
+| | Agent | | State |
+|---|---|---|---|
+| `` | Claude Code | `` | blocked asking permission |
+| `󰚩` | Devin CLI | `` | blocked on a question |
+| | | `` | finished a turn |
+| | | `` | the turn failed |
+| | | `󰔟` | working |
+
+Splitting identity from state means neither has to be inferred from the other's
+colour. Identity takes mauve and cyan, which no state uses, so the two halves
+never read as one gradient. `busy` is the only muted state, deliberately: it is
+the one thing here you do not owe a response to, and a column that shouted on
+every working agent is one you would learn to ignore.
 
 A window row shows the most actionable agent among its panes, and a session
 header the most actionable among its windows, so a pane blocked three windows
 deep is visible without unfolding anything. Switch to pane mode (<kbd>^p</kbd>)
 for the exact pane.
 
-The column is one cell wide and reserved on every row, agent or not: an
+The column is a fixed two cells and reserved on every row, agent or not: an
 indicator drawn only where there is an agent would shift every other column on
-those rows and nowhere else.
+those rows and nowhere else. Every glyph is pinned to one display cell by a
+test — a double-width one would break the table's column budget.
 
 <kbd>^a</kbd> filters to windows with an agent that wants you — `perm`, `ask`,
 `done` or `err`, but not `busy`. Typing an agent's name in the search box works
@@ -125,18 +136,43 @@ too; the name is part of each row's match text without being drawn.
 
 ## The status-bar counter
 
+Two pills at the far right of `status-right`:
+
+```
+ 󰚩 3   󰂚 1
+```
+
+- **󰚩 how many agents are open** — Claude Code and Devin CLI together
+- **󰂚 how many of them want you** — waiting, finished, or failed
+
+The second pill stays drawn at zero, greyed rather than hidden. A count that
+vanished would shift the first pill sideways every time an agent finished, which
+is exactly when you are looking at it. The whole segment disappears when no
+agent is running at all.
+
 ```tmux
 set -g @kaku-tab-agents 'on'
-set -g status-interval 5
+set -g status-interval  5
 ```
 
 Opt-in, and off by default, because it appends to `status-right` — which most
 people compose by hand. The plugin appends after whatever you have already set,
-so it lands at the far right.
+so it lands last.
 
-It renders nothing at all when no agent is running, which is why it is a plain
-`#()` emitting its own `#[fg=...]` styling rather than a themed status module: a
-module would still draw its icon and separators around an empty value.
+It draws catppuccin's own module shape — rounded separator, icon on its own
+colour, value on the shared module background — resolved from the live `@thm_*`
+palette, so it sits flush against the modules beside it. Without catppuccin
+loaded it falls back to plain terminal colour names and still renders. It is
+*not* a catppuccin module, because a real module always paints its icon and
+separators, including around an empty value — which is what this is most of the
+time.
+
+| Option | Default | Meaning |
+|---|---|---|
+| `@kaku-tab-agent-color` | `@thm_mauve` | pill colour for the open count |
+| `@kaku-tab-notify-color` | `@thm_peach` | pill colour when something wants you |
+| `@kaku-tab-agent-icon` | `󰚩` | icon for the open count |
+| `@kaku-tab-notify-icon` | `󰂚` | icon for the notification count |
 
 Refresh has two halves. `status-interval` is only the ceiling on staleness — the
 hook calls `refresh-client -S` on every attached client the moment an agent

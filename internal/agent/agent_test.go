@@ -92,18 +92,6 @@ func TestBest(t *testing.T) {
 	}
 }
 
-// The picker's column budget reserves exactly one cell for this, so a
-// two-character or multi-cell letter would shift every column on agent rows.
-func TestLetterIsOneCellOrEmpty(t *testing.T) {
-	for _, tc := range []struct{ agent, want string }{
-		{Claude, "C"}, {Devin, "D"}, {"", ""}, {"cursor", ""},
-	} {
-		if got := (Record{Agent: tc.agent, State: Busy}).Letter(); got != tc.want {
-			t.Errorf("Letter(%q) = %q, want %q", tc.agent, got, tc.want)
-		}
-	}
-}
-
 func TestLiveRejectsUnknownAndDead(t *testing.T) {
 	if Live(Record{}) {
 		t.Error("empty record reported live")

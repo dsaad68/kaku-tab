@@ -895,27 +895,35 @@ func (m *Model) badge(st model.Status, tab string, isHeader bool) string {
 	}
 }
 
-// agentCell renders the agent column: the agent's letter coloured by its state,
-// or a blank. Exactly one display cell either way — the column is reserved on
-// every row, so an indicator that appeared only on agent rows would shift every
-// other column on those rows and nowhere else.
+// agentCells is the width of the agent column: one cell naming the agent, one
+// naming what it wants. Reserved on every row, agent or not — an indicator
+// drawn only where there is an agent would shift every other column on those
+// rows and nowhere else.
+const agentCells = 2
+
+// agentCell renders that column. Always exactly agentCells wide.
 func agentCell(r agent.Record) string {
-	letter := r.Letter()
-	if letter == "" {
-		return " "
+	if r.Empty() {
+		return strings.Repeat(" ", agentCells)
 	}
+	id := cIDClaude.Render(glyphClaude)
+	if r.Agent == agent.Devin {
+		id = cIDDevin.Render(glyphDevin)
+	}
+	var state string
 	switch r.State {
 	case agent.Perm:
-		return cAgentPerm.Render(letter)
+		state = cAgentPerm.Render(glyphPerm)
 	case agent.Ask:
-		return cAgentAsk.Render(letter)
+		state = cAgentAsk.Render(glyphAsk)
 	case agent.Err:
-		return cAgentErr.Render(letter)
+		state = cAgentErr.Render(glyphErr)
 	case agent.Done:
-		return cAgentDone.Render(letter)
+		state = cAgentDone.Render(glyphDone)
 	default:
-		return cAgentBusy.Render(letter)
+		state = cAgentBusy.Render(glyphBusy)
 	}
+	return id + state
 }
 
 func glyph(st model.Status) string {
@@ -998,9 +1006,9 @@ func (m *Model) renderRow(r row, selected bool) string {
 	badgeCol := strings.Repeat(" ", maxInt(0, m.badgeW-ansi.StringWidth(badge))) + badge
 	fixed := cursorCells + ansi.StringWidth(indent) + m.badgeW + rightMargin
 	if r.kind == kindPane {
-		fixed += 1 + 1 + 1 + 6 // glyph, active marker, agent, six single spaces
+		fixed += 1 + 1 + agentCells + 6 // glyph, active marker, agent, six spaces
 	} else {
-		fixed += 1 + 1 + 4 + 2 + 6 // glyph, agent, "NNp ", flags, six single spaces
+		fixed += 1 + agentCells + 4 + 2 + 6 // glyph, agent, "NNp ", flags, six spaces
 	}
 	avail := lw - fixed
 	if avail < 20 {

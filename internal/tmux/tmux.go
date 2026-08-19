@@ -285,6 +285,33 @@ func RefreshStatus() {
 	}
 }
 
+// Options reads several global options in one subprocess.
+//
+// Every tmux.Option is a fork, and the status segment needs a whole palette on
+// a timer. display-message expands them all in a single pass, which keeps the
+// status bar's per-tick cost at one process rather than one per colour.
+func Options(names ...string) map[string]string {
+	if len(names) == 0 {
+		return nil
+	}
+	parts := make([]string, len(names))
+	for i, n := range names {
+		parts[i] = "#{E:" + n + "}"
+	}
+	out, err := Run("display-message", "-p", "-F", f(parts...))
+	if err != nil {
+		return nil
+	}
+	vals := strings.Split(out, FS)
+	m := make(map[string]string, len(names))
+	for i, n := range names {
+		if i < len(vals) && vals[i] != "" {
+			m[n] = vals[i]
+		}
+	}
+	return m
+}
+
 // Option reads a global tmux option, returning def when unset.
 func Option(name, def string) string {
 	out, err := Run("show-option", "-gqv", name)

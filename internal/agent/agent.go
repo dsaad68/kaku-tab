@@ -99,21 +99,6 @@ func (r Record) Rank() int {
 	}
 }
 
-// Letter is the single display cell the picker draws for this agent: the agent
-// is encoded in the letter and the state in the colour. A letter rather than a
-// glyph so the column is unambiguously one cell wide with no nerd font, which
-// the table's fixed column budget depends on.
-func (r Record) Letter() string {
-	switch r.Agent {
-	case Devin:
-		return "D"
-	case Claude:
-		return "C"
-	default:
-		return ""
-	}
-}
-
 // Format renders a record for the pane option.
 //
 // Colon-separated, where the rest of this tool uses \x1f: every field here is

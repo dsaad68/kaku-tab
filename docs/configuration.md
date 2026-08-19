@@ -109,13 +109,17 @@ kaku-tab titles --dry-run
 
 ## Agents
 
-A counter on the right of the status bar for the Claude Code and Devin CLI
-sessions running in your panes, and an agent column in the picker. See
-[agents.md](agents.md).
+Two counters at the far right of the status bar — how many Claude Code and Devin
+CLI sessions are open, and how many of them are waiting on you — plus an agent
+column in the picker. See [agents.md](agents.md).
 
 | Option | Default | Meaning |
 |---|---|---|
 | `@kaku-tab-agents` | `off` | append the agent counter to `status-right` |
+| `@kaku-tab-agent-color` | `@thm_mauve` | pill colour for the "agents open" count |
+| `@kaku-tab-notify-color` | `@thm_peach` | pill colour when something wants you |
+| `@kaku-tab-agent-icon` | 󰚩 | icon for the "agents open" count |
+| `@kaku-tab-notify-icon` | 󰂚 | icon for the notification count |
 
 Off by default because it appends to `status-right`, which most people compose
 by hand. Turning it on is two lines, plus installing the hooks that feed it:
