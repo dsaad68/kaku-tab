@@ -50,6 +50,10 @@ func TestSegmentShowsBothCounts(t *testing.T) {
 	if !strings.Contains(s, "] 1") {
 		t.Errorf("segment %q does not report 1 wanting attention", s)
 	}
+	// Notifications lead — that is the number being scanned for.
+	if strings.Index(s, "N") > strings.Index(s, "A") {
+		t.Errorf("segment %q puts the open count before the notification count", s)
+	}
 }
 
 // The second pill stays drawn at zero rather than disappearing: a count that
@@ -81,8 +85,9 @@ func TestSegmentHighlightsNotifyPillWhenWaiting(t *testing.T) {
 // flush against the modules beside them.
 func TestSegmentPillShape(t *testing.T) {
 	s := testTheme().Segment(Counts{Waiting: 1})
-	want := "#[fg=mauve]<#[fg=crust,bg=mauve] A #[fg=fg,bg=surf] 1#[fg=surf] " +
-		"#[fg=peach]<#[fg=crust,bg=peach] N #[fg=fg,bg=surf] 1#[fg=surf] "
+	// Notifications first, then the open count.
+	want := "#[fg=peach]<#[fg=crust,bg=peach] N #[fg=fg,bg=surf] 1#[fg=surf] " +
+		"#[fg=mauve]<#[fg=crust,bg=mauve] A #[fg=fg,bg=surf] 1#[fg=surf] "
 	if s != want {
 		t.Errorf("segment shape\n got %q\nwant %q", s, want)
 	}

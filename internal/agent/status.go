@@ -86,13 +86,15 @@ func (t Theme) Segment(c Counts) string {
 	if c.Open() == 0 {
 		return ""
 	}
-	// The second pill is drawn even at zero, greyed rather than hidden. A count
-	// that vanished would shift the first pill sideways every time an agent
-	// finished — exactly when you are looking at it.
+	// The notification pill is drawn even at zero, greyed rather than hidden. A
+	// count that vanished would shift the pill beside it sideways every time an
+	// agent finished — exactly when you are looking at it.
 	notify := t.IdleBG
 	if c.Attention() > 0 {
 		notify = t.NotifyBG
 	}
-	return t.pill(t.AgentBG, t.AgentIco, strconv.Itoa(c.Open())) +
-		t.pill(notify, t.NotifIco, strconv.Itoa(c.Attention()))
+	// Notifications lead: it is the number you are scanning for, and the one
+	// that changes. The open count behind it is context for it.
+	return t.pill(notify, t.NotifIco, strconv.Itoa(c.Attention())) +
+		t.pill(t.AgentBG, t.AgentIco, strconv.Itoa(c.Open()))
 }

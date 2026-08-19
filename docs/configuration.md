@@ -109,9 +109,8 @@ kaku-tab titles --dry-run
 
 ## Agents
 
-Two counters at the far right of the status bar — how many Claude Code and Devin
-CLI sessions are open, and how many of them are waiting on you — plus an agent
-column in the picker. See [agents.md](agents.md).
+Two counters in the status bar — how many Claude Code and Devin CLI sessions are
+waiting on you, and how many are open — plus an agent column in the picker. See [agents.md](agents.md).
 
 | Option | Default | Meaning |
 |---|---|---|

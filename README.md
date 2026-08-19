@@ -185,11 +185,11 @@ were, alt-tab style.
 
 Claude Code and Devin CLI sessions show up as a column in the picker — one glyph
 for which agent, one for what it wants: working, blocked on a permission prompt,
-asking you something, finished, or failed. The tmux status bar gets two counters
-at the far right: how many agents are open, and how many of them want you.
+asking you something, finished, or failed. The tmux status bar gets two counters:
+how many agents want you, and how many are open.
 
 ```
- 󰚩 3   󰂚 1
+ 󰂚 1   󰚩 3
 ```
 
 ```sh

@@ -139,14 +139,17 @@ too; the name is part of each row's match text without being drawn.
 Two pills at the far right of `status-right`:
 
 ```
- 󰚩 3   󰂚 1
+ 󰂚 1   󰚩 3
 ```
 
+- **󰂚 how many want you** — waiting, finished, or failed
 - **󰚩 how many agents are open** — Claude Code and Devin CLI together
-- **󰂚 how many of them want you** — waiting, finished, or failed
 
-The second pill stays drawn at zero, greyed rather than hidden. A count that
-vanished would shift the first pill sideways every time an agent finished, which
+Notifications lead: that is the number you scan for, and the one that changes.
+The open count behind it is context for it.
+
+The notification pill stays drawn at zero, greyed rather than hidden. A count
+that vanished would shift the pill beside it every time an agent finished, which
 is exactly when you are looking at it. The whole segment disappears when no
 agent is running at all.
 
