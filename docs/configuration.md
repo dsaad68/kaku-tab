@@ -137,6 +137,11 @@ kaku-tab install-hooks
 `refresh-client -S` the moment an agent changes state, so the count moves as it
 happens.
 
+The plugin appends the segment to the end of `status-right`. To place it
+somewhere else — before a battery module, say — set `@kaku-tab-agents 'off'` and
+add `#(kaku-tab agents --format tmux)` where you want it. See
+[agents.md](agents.md#putting-it-somewhere-else).
+
 ## Full example
 
 ```tmux

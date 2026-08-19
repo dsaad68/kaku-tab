@@ -201,6 +201,10 @@ set -g @kaku-tab-agents 'on'
 set -g status-interval  5
 ```
 
+That appends the pills to the end of `status-right`, i.e. the far right of the
+bar. To place them anywhere else, leave the option off and put
+`#(kaku-tab agents --format tmux)` where you want it.
+
 The agents report themselves: each CLI's lifecycle hooks run `kaku-tab hook`,
 which records the state on the pane it inherited via `$TMUX_PANE`. Nothing is
 guessed from the process table — `#{pane_current_command}` says `node` for

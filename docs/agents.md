@@ -159,6 +159,25 @@ Opt-in, and off by default, because it appends to `status-right` — which most
 people compose by hand. The plugin appends after whatever you have already set,
 so it lands last.
 
+### Putting it somewhere else
+
+Appending is only the default, and the end of `status-right` is the far right of
+the bar. To choose the position — to lead with the pills and keep a battery
+module rightmost, say — place the segment yourself and leave `@kaku-tab-agents`
+off, so the plugin does not append a second copy:
+
+```tmux
+set -g  status-right "#(kaku-tab agents --format tmux)"
+set -ag status-right "#{E:@catppuccin_status_session}"
+set -agF status-right "#{E:@catppuccin_status_battery}"
+
+set -g @kaku-tab-agents 'off'
+```
+
+Plain `-g`/`-ag`, never `-F`: `-F` expands formats at load time, which would run
+the `#()` once and freeze its output instead of leaving it for the status bar to
+re-run on each redraw.
+
 It draws catppuccin's own module shape — rounded separator, icon on its own
 colour, value on the shared module background — resolved from the live `@thm_*`
 palette, so it sits flush against the modules beside it. Without catppuccin
