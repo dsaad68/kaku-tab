@@ -97,10 +97,10 @@ func TestAgentAndStateAreBothShown(t *testing.T) {
 	var sawClaudePerm, sawDevinBusy bool
 	for _, r := range m.rows {
 		cell := ansi.Strip(agentCell(r.agent))
-		if cell == glyphClaude+glyphPerm {
+		if cell == glyphClaude+" "+glyphPerm {
 			sawClaudePerm = true
 		}
-		if cell == glyphDevin+glyphBusy {
+		if cell == glyphDevin+" "+glyphBusy {
 			sawDevinBusy = true
 		}
 	}

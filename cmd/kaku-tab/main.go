@@ -185,7 +185,7 @@ func popup(selfTTY, selfSession string) error {
 	preview := tmux.Option("@kaku-tab-preview", "off") == "on"
 
 	for i := 0; i < 16; i++ { // bounded: a toggle loop should never run away
-		w, h := popupSize(preview)
+		w, h := popupSize(preview, selfSession)
 		args := []string{"display-popup", "-E", "-B", "-w", w, "-h", h}
 		if selfTTY != "" {
 			args = append(args, "-c", selfTTY)
@@ -214,16 +214,93 @@ func popup(selfTTY, selfSession string) error {
 
 // popupSize picks the geometry for the current preview setting: without a
 // preview pane the list alone needs far less width.
-func popupSize(preview bool) (string, string) {
+//
+// The configured size is a *maximum*. A popup opened at a flat 60%x70% for a
+// list of four rows is seven-tenths empty, and tmux cannot shrink it afterwards
+// — display-popup fixes -w/-h at creation — so the fit has to be worked out
+// here, before the picker is drawn.
+func popupSize(preview bool, selfSession string) (string, string) {
 	size := tmux.Option("@kaku-tab-popup-size", "90%,85%")
 	if !preview {
 		size = tmux.Option("@kaku-tab-popup-size-compact", "60%,70%")
 	}
 	w, h, ok := strings.Cut(size, ",")
 	if !ok {
-		return "90%", "85%"
+		w, h = "90%", "85%"
 	}
-	return strings.TrimSpace(w), strings.TrimSpace(h)
+	w, h = strings.TrimSpace(w), strings.TrimSpace(h)
+	if tmux.Option("@kaku-tab-popup-fit", "on") != "on" {
+		return w, h
+	}
+
+	// A preview needs the room the configured width buys it, so only the height
+	// is fitted in that mode.
+	cols, rows, ok := measure(selfSession, preview)
+	if !ok {
+		return w, h
+	}
+	if !preview {
+		w = fit(w, cols, "client_width")
+	}
+	return w, fit(h, rows, "client_height")
+}
+
+// measure asks the picker how big it would like to be. Failures are not fatal:
+// the caller falls back to the configured size, which is what it used to always
+// use.
+func measure(selfSession string, preview bool) (cols, rows int, ok bool) {
+	ws, err := resolve.Resolve(liveSource{}, opts(selfSession, false))
+	if err != nil || len(ws) == 0 {
+		return 0, 0, false
+	}
+	sortMode := sortOption()
+	c, r := ui.Measure(ws, ui.Options{
+		Suffix:       tmux.Option("@kaku-tab-satellite-suffix", model.DefaultSatelliteSuffix),
+		Tree:         tmux.Option("@kaku-tab-tree", "on") == "on",
+		MergeSingle:  tmux.Option("@kaku-tab-merge-single", "on") == "on",
+		Preview:      preview,
+		HideDetached: tmux.Option("@kaku-tab-detached", "on") == "off",
+		Sort:         sortMode,
+		MRU:          mruList(sortMode),
+	})
+	return c, r, true
+}
+
+// fit reduces a configured dimension to what the content needs, never past a
+// floor that keeps the picker usable, and never above the configured maximum.
+//
+// The maximum may be a percentage, which only tmux can resolve, so it is
+// converted through the client's own size rather than guessed at.
+func fit(configured string, need int, clientDim string) string {
+	var limit int
+	if pct, isPct := strings.CutSuffix(configured, "%"); isPct {
+		n, err := strconv.Atoi(pct)
+		if err != nil {
+			return configured
+		}
+		out, e := tmux.Run("display-message", "-p", "#{"+clientDim+"}")
+		if e != nil {
+			return configured
+		}
+		total, err := strconv.Atoi(strings.TrimSpace(out))
+		if err != nil {
+			return configured
+		}
+		limit = total * n / 100
+	} else if n, err := strconv.Atoi(configured); err == nil {
+		limit = n
+	} else {
+		return configured
+	}
+
+	const floor = 12 // below this the frame and footer crowd out the list
+	if need < floor {
+		need = floor
+	}
+	if need > limit {
+		need = limit
+	}
+	return strconv.Itoa(need)
 }
 
 type persisted struct {
@@ -301,6 +378,11 @@ func pick(selfTTY, selfSession string) error {
 	// find every window gone. It only rides across a preview-toggle relaunch.
 	agentsOnly := resumed && restore.AgentsOnly
 
+	mergeSingle := tmux.Option("@kaku-tab-merge-single", "on") == "on"
+	if resumed {
+		mergeSingle = restore.MergeSingle
+	}
+
 	self, _ := os.Executable()
 	ctx := action.Ctx{SelfTTY: selfTTY, Suffix: suffix, AttachSh: self}
 
@@ -320,6 +402,7 @@ func pick(selfTTY, selfSession string) error {
 
 		HideDetached: hideDetached,
 		AgentsOnly:   agentsOnly,
+		MergeSingle:  mergeSingle,
 	})
 
 	// The picker owns the popup's terminal; Kaku's own alt-screen is untouched.

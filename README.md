@@ -137,6 +137,12 @@ and press <kbd>Alt</kbd>+<kbd>L</kbd>.
 Typing filters. A session header matches on behalf of its windows, so `api`
 shows the session *and* everything under it.
 
+The popup opens at the size the list needs — the configured sizes are maximums —
+and columns are sized to their contents, with constant ones (the pane count when
+nothing is split, the flags when nothing is flagged) dropped entirely. A session
+with a single window renders as one row rather than a header repeating its only
+child; set `@kaku-tab-merge-single 'off'` to keep the header.
+
 When there are more rows than fit, a scrollbar appears down the right edge —
 otherwise a list that continues below the frame looks exactly like one that
 ends there. <kbd>Shift</kbd>+<kbd>Tab</kbd> folds every session, and
