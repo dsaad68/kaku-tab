@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"sort"
 	"strings"
-	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -65,9 +64,6 @@ type row struct {
 	tabID  string
 	agent  agent.Record
 	last   bool // last child of its group -> └
-	// merged marks a row that stands in for its own group header, because that
-	// group has exactly one child and the header would only have repeated it.
-	merged bool
 }
 
 // Result is what the picker hands back to main.
@@ -94,7 +90,6 @@ type State struct {
 	PaneMode     bool            `json:"pane_mode"`
 	HideDetached bool            `json:"hide_detached"`
 	AgentsOnly   bool            `json:"agents_only"`
-	MergeSingle  bool            `json:"merge_single"`
 	Collapse     map[string]bool `json:"collapse"`
 }
 
@@ -115,38 +110,11 @@ type Options struct {
 	// HideDetached drops sessions with no terminal tab from the list.
 	HideDetached bool
 
-	// MergeSingle folds a group of one into a single row. A session with one
-	// window needs no header: there is nothing to group and nothing to fold, and
-	// the header only repeats the badge and agent state of the row below it.
-	MergeSingle bool
-
 	// AgentsOnly narrows the list to windows holding an agent that wants you —
 	// blocked on permission, asking a question, finished, or failed. A window
 	// whose agent is merely working is not one of them: the point of the filter
 	// is "what is waiting on me", not "where are the agents".
 	AgentsOnly bool
-}
-
-// layout is every column width in the table, computed once from the rows the
-// table actually holds rather than from fixed proportions of the frame.
-//
-// Sizing to content is the point: a fixed 22%% of the width for a column that
-// holds "1", and 34%% for one that holds "zsh", spent seventy cells on padding
-// and pushed the badge — the one column this tool exists to show — an eyeful
-// away from the name it belongs to.
-//
-// A width of 0 means the column is not drawn at all. Two of them earn that
-// regularly: the pane count when nothing has a second pane, and the flags when
-// nothing is flagged. A column whose every cell reads the same carries no
-// information, and this table is mostly such rows.
-type layout struct {
-	agent int // 0, or agentCells when any row has an agent
-	label int
-	name  int
-	path  int
-	panes int // 0, or paneCountCells when any window has more than one pane
-	flags int // 0, or flagCells when any window carries a flag
-	badge int
 }
 
 type previewMsg struct {
@@ -170,7 +138,7 @@ type Model struct {
 	collapse    map[string]bool
 	width       int
 	height      int
-	lay         layout // column widths, shared by every row
+	badgeW      int // widest badge across the table; shared by every row
 	preview     map[string]string
 	renaming    bool
 	rename      string
@@ -206,46 +174,13 @@ func New(ws []model.Window, opt Options) *Model {
 	return m
 }
 
-// Measure reports the size the picker would like: exactly wide enough for its
-// widest row and tall enough for all of them, frame and footer included.
-//
-// The caller clamps this to whatever maximum it is willing to open. It exists
-// because tmux cannot resize a popup once it is open — display-popup takes its
-// -w/-h at creation — so the geometry has to be decided before the picker is
-// ever drawn, and only the picker knows how wide its own table is.
-func Measure(ws []model.Window, opt Options) (cols, rows int) {
-	m := New(ws, opt)
-	// Measure against a width no real terminal reaches, so the proportional
-	// caps in relayout never bind and every column reports its natural size.
-	m.width, m.height = 10000, 10000
-	m.relayout()
-
-	l := m.lay
-	content := m.fixedCells(l) + l.label + l.name + l.path
-	// scrollbar gutter + frame border
-	cols = maxInt(minPopupCols, content+scrollbarCells+2)
-
-	// Count the footer at the width we will actually open at, not at the
-	// measuring width: the help bar wraps, and a popup sized against a
-	// one-line footer opens with three lines of it eating the list.
-	m.width = cols
-	// frame top+bottom, prompt, rule, blank, footer.
-	rows = len(m.rows) + 5 + len(m.footerLines())
-	return cols, rows
-}
-
-// minPopupCols is a floor on the fitted width. Below roughly this the help bar
-// wraps into more lines than the list has rows, and a popup that is mostly
-// footer is no better than one that is mostly blank.
-const minPopupCols = 80
-
 // State captures what a relaunch needs to restore.
 func (m *Model) State() State {
 	return State{
 		Query: m.query, Cursor: m.cursor, Offset: m.offset,
 		Preview: m.opt.Preview, PaneMode: m.opt.PaneMode,
 		HideDetached: m.opt.HideDetached, AgentsOnly: m.opt.AgentsOnly,
-		MergeSingle: m.opt.MergeSingle, Collapse: m.collapse,
+		Collapse: m.collapse,
 	}
 }
 
@@ -362,12 +297,7 @@ func (m *Model) build() {
 				htab = w.TabID
 			}
 		}
-		// A group of one becomes one row: the header would carry the same badge
-		// and the same agent state as the single child directly beneath it, and
-		// there is nothing to fold. Half the rows in a list of one-window
-		// sessions were that duplicate.
-		merge := m.opt.Tree && m.opt.MergeSingle && n == 1
-		if m.opt.Tree && !merge {
+		if m.opt.Tree {
 			m.rows = append(m.rows, row{
 				kind: kindHeader, group: g, search: g, count: n,
 				status: hstat, tabID: htab, agent: agent.Best(hagents),
@@ -378,7 +308,7 @@ func (m *Model) build() {
 			if m.opt.PaneMode {
 				for j, p := range w.Panes_ {
 					m.rows = append(m.rows, row{
-						kind: kindPane, group: g, win: w, pane: p, merged: merge,
+						kind: kindPane, group: g, win: w, pane: p,
 						search: strings.Join([]string{w.Session, w.Index, p.Index, p.Cmd, p.Path, p.Agent.Agent}, " "),
 						status: w.Status, tabID: w.TabID, agent: p.Agent,
 						last: j == len(w.Panes_)-1,
@@ -387,7 +317,7 @@ func (m *Model) build() {
 				continue
 			}
 			m.rows = append(m.rows, row{
-				kind: kindWindow, group: g, win: w, merged: merge,
+				kind: kindWindow, group: g, win: w,
 				// The agent name joins the search text so typing "claude"
 				// narrows to agent windows; it is never rendered as text.
 				search: strings.Join([]string{w.Session, w.Index, w.Name, w.Path, w.Agent.Agent}, " "),
@@ -495,10 +425,7 @@ func (m *Model) refilter() {
 				continue
 			}
 		}
-		// Never hide a merged row: it has no header, so nothing could unfold it
-		// again. A group collapsed before a reload merged it would otherwise
-		// vanish for good.
-		if r.kind != kindHeader && !r.merged && m.collapse[r.group] {
+		if r.kind != kindHeader && m.collapse[r.group] {
 			continue
 		}
 		m.view = append(m.view, i)
@@ -511,90 +438,20 @@ func (m *Model) refilter() {
 		m.cursor = 0
 	}
 
-	m.relayout()
-	m.ensureVisible()
-}
-
-// relayout sizes every column once for the whole table.
-//
-// Once for the whole table, never per row: deriving a width from each row's own
-// content gives every row a different layout, which is what made this table look
-// ragged before. Measured in display cells — ansi.StringWidth for anything that
-// may carry styling, runewidth for plain text — because a byte or rune count
-// treats escape sequences and nerd-font glyphs as one cell each and silently
-// narrows whichever row happens to carry them.
-func (m *Model) relayout() {
-	var l layout
+	// One badge column for the whole table, sized to the widest badge. Sizing
+	// it per row gave every row a different column budget, which is what made
+	// the table look ragged: "⟦kaku 7⟧ ← here" is nearly twice "⟦kaku 8⟧".
+	m.badgeW = 0
 	for _, r := range m.rows {
-		if !r.agent.Empty() {
-			l.agent = agentCells
-		}
 		if r.kind == kindHeader {
-			// Headers are truncated rather than padded, so their badge does not
-			// set the column width.
 			continue
 		}
-		if w := ansi.StringWidth(m.badge(r.status, r.tabID, false)); w > l.badge {
-			l.badge = w
-		}
-		l.label = maxInt(l.label, runewidth.StringWidth(m.rowLabel(r)))
-		l.name = maxInt(l.name, runewidth.StringWidth(m.rowName(r)))
-		l.path = maxInt(l.path, runewidth.StringWidth(m.rowPath(r)))
-		if r.kind == kindWindow {
-			if r.win.Panes > 1 {
-				l.panes = paneCountCells
-			}
-			if rowFlags(r) != "" {
-				l.flags = flagCells
-			}
+		if w := ansi.StringWidth(m.badge(r.status, r.tabID, false)); w > m.badgeW {
+			m.badgeW = w
 		}
 	}
 
-	// Cap each flexible column so one outlier — a 90-character path, a session
-	// named after a git branch — cannot squeeze the others out. The caps are
-	// generous because they only ever bind on outliers; the common case is that
-	// none of them apply and the row is exactly as wide as its content.
-	avail := maxInt(20, m.rowWidth()-m.fixedCells(l))
-	l.label = minInt(l.label, avail*30/100)
-	l.name = minInt(l.name, avail*40/100)
-	l.path = minInt(l.path, maxInt(8, avail-l.label-l.name))
-	m.lay = l
-}
-
-// fixedCells is everything in a row that is not one of the flexible columns:
-// the cursor, the tree indent, the status glyph, the agent column, the pane
-// count or active marker, the flags, the badge, the single space after each of
-// them, and the right margin.
-//
-// This sum is the one piece of arithmetic here that has to be exact. Wrong by
-// even a few cells and the row runs past the list width, where truncateANSI
-// eats the badge — rightmost, and the point of the tool.
-func (m *Model) fixedCells(l layout) int {
-	// status glyph and its space; a trailing space after each of label, name
-	// and path.
-	n := cursorCells + m.indentCells() + rightMargin + l.badge + 2 + 3
-	if l.agent > 0 {
-		n += l.agent + 1
-	}
-	if m.opt.PaneMode {
-		n += markerCells + 1
-	} else {
-		if l.panes > 0 {
-			n += l.panes
-		}
-		if l.flags > 0 {
-			n += l.flags + 1
-		}
-	}
-	return n
-}
-
-// indentCells is the width of the tree connector on a child row.
-func (m *Model) indentCells() int {
-	if m.opt.Tree {
-		return 3 // " ├ "
-	}
-	return 1
+	m.ensureVisible()
 }
 
 // innerW is the drawable width inside the frame border.
@@ -634,27 +491,9 @@ func (m *Model) helpLines() []string {
 	return helpBarLines(m.helpPairs(), w)
 }
 
-// footerLines is everything below the list: the selected row's agent, spelled
-// out, and the help bar. One source of truth so listHeight reserves exactly the
-// rows View is about to draw.
-func (m *Model) footerLines() []string {
-	var out []string
-	if !m.renaming && m.status == "" {
-		if r, ok := m.current(); ok {
-			if words := agentWords(r.agent); words != "" {
-				out = append(out, agentCell(r.agent)+" "+cHead.Render(words))
-			}
-		}
-	}
-	if m.status != "" {
-		return append(out, cFlag.Render(m.status))
-	}
-	return append(out, m.helpLines()...)
-}
-
 func (m *Model) listHeight() int {
-	// frame top+bottom (2) + prompt + rule + blank + footer
-	h := m.height - 5 - len(m.footerLines())
+	// frame top+bottom (2) + prompt + rule + blank + help lines
+	h := m.height - 5 - len(m.helpLines())
 	if !m.sideBySide() && m.opt.Preview {
 		h = h/2 - 1
 	}
@@ -721,9 +560,6 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
-		// Column caps are a proportion of the available width, so a resize can
-		// change them even though the rows have not.
-		m.relayout()
 		m.ensureVisible()
 		return m, nil
 
@@ -840,9 +676,6 @@ func (m *Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.collapse[r.group] = !m.collapse[r.group]
 			m.refilter()
 			return m, m.previewCmd()
-		}
-		if r.merged {
-			return m, nil // no header to fold into
 		}
 		// On a child: fold the group it belongs to and land on its header,
 		// rather than doing nothing.
@@ -1018,14 +851,6 @@ func (m *Model) choose(mode action.Mode) (tea.Model, tea.Cmd) {
 // printable, which silently narrows the selected row's columns.
 const cursorCells = 3
 
-// Fixed column widths. paneCountCells covers "NNp " including its own trailing
-// space; markerCells is the active-pane "*".
-const (
-	paneCountCells = 4
-	flagCells      = 2
-	markerCells    = 1
-)
-
 // rightMargin keeps the badge column off the frame border.
 const rightMargin = 1
 
@@ -1052,60 +877,6 @@ func padLeft(s string, w int) string {
 	return "…" + string(r)
 }
 
-// rowLabel, rowName, rowPath and rowFlags are the single source of truth for
-// what each flexible column holds. relayout measures exactly what renderRow
-// draws — deriving the two separately is how a column ends up sized for text
-// that is not in it.
-func (m *Model) rowLabel(r row) string {
-	if r.merged {
-		// A merged row stands in for its own session header, so it carries the
-		// session name the header would have shown.
-		return r.group
-	}
-	if r.kind == kindPane {
-		if m.opt.Tree {
-			return r.win.Index + "." + r.pane.Index
-		}
-		return r.win.Session + ":" + r.win.Index + "." + r.pane.Index
-	}
-	if m.opt.Tree {
-		return r.win.Index
-	}
-	return r.win.Session + ":" + r.win.Index
-}
-
-func (m *Model) rowName(r row) string {
-	if r.kind == kindPane {
-		return strings.TrimSpace(r.pane.Cmd)
-	}
-	return strings.TrimSpace(r.win.Name)
-}
-
-func (m *Model) rowPath(r row) string {
-	if r.kind == kindPane {
-		return tilde(r.pane.Path)
-	}
-	return tilde(r.win.Path)
-}
-
-func rowFlags(r row) string {
-	f := ""
-	if r.win.Activity {
-		f += "!"
-	}
-	if r.win.Zoomed {
-		f += "z"
-	}
-	return f
-}
-
-func minInt(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
 func (m *Model) badge(st model.Status, tab string, isHeader bool) string {
 	switch st {
 	case model.Visible:
@@ -1124,14 +895,11 @@ func (m *Model) badge(st model.Status, tab string, isHeader bool) string {
 	}
 }
 
-// agentCells is the width of the agent column: one cell naming the agent, a
-// space, one cell naming what it wants. The space is not decoration — flush
-// against each other the two glyphs read as a single smudged symbol, which
-// defeats the whole point of splitting identity from state.
-//
-// Reserved on every row of a table that has any agent at all, and dropped
-// entirely from one that has none.
-const agentCells = 3
+// agentCells is the width of the agent column: one cell naming the agent, one
+// naming what it wants. Reserved on every row, agent or not — an indicator
+// drawn only where there is an agent would shift every other column on those
+// rows and nowhere else.
+const agentCells = 2
 
 // agentCell renders that column. Always exactly agentCells wide.
 func agentCell(r agent.Record) string {
@@ -1155,36 +923,7 @@ func agentCell(r agent.Record) string {
 	default:
 		state = cAgentBusy.Render(glyphBusy)
 	}
-	return id + " " + state
-}
-
-// agentWords spells out an agent record for the footer. The glyphs are compact
-// but nothing on screen says what they mean; this is where you find out, on
-// whichever row the cursor is on.
-func agentWords(r agent.Record) string {
-	if r.Empty() {
-		return ""
-	}
-	var what string
-	switch r.State {
-	case agent.Perm:
-		what = "waiting for permission"
-	case agent.Ask:
-		what = "waiting for an answer"
-	case agent.Done:
-		what = "finished a turn"
-	case agent.Err:
-		what = "turn failed"
-	default:
-		what = "working"
-	}
-	out := r.Agent + " · " + what
-	if r.At > 0 {
-		if d := time.Since(time.Unix(r.At, 0)); d >= time.Second {
-			out += " · " + d.Round(time.Second).String() + " ago"
-		}
-	}
-	return out
+	return id + state
 }
 
 func glyph(st model.Status) string {
@@ -1244,33 +983,54 @@ func (m *Model) renderRow(r row, selected bool) string {
 		return truncateANSI(line, lw)
 	}
 
-	// The badge is reserved first: it is the one column the whole tool exists to
-	// show, so it must never be what gets truncated.
+	// Column budget. The badge is reserved first: it is the one column the
+	// whole tool exists to show, so it must never be what gets truncated.
 	indent := " ├ "
 	if r.last {
 		indent = " └ "
 	}
-	if !m.opt.Tree || r.merged {
-		// A merged row has no header above it, so a tree connector would point
-		// at nothing.
-		indent = strings.Repeat(" ", m.indentCells())
+	if !m.opt.Tree {
+		indent = " "
 	}
 
-	l := m.lay
+	// Budget the columns exactly. `avail` is the space the three flexible
+	// columns share, so every fixed cell — cursor, indent, glyph, the single
+	// spaces between fields, the "NNp " counter, the flags, the badge column
+	// and the right margin — must be subtracted here. Getting this sum wrong
+	// by even a few cells pushes the row past lw, and the badge (rightmost,
+	// and the whole point of the tool) is what truncateANSI eats.
+	//
+	// badgeW is the table-wide maximum, never this row's own width: sizing it
+	// per row gives every row a different layout.
 	badge := m.badge(r.status, r.tabID, false)
-	badgeCol := strings.Repeat(" ", maxInt(0, l.badge-ansi.StringWidth(badge))) + badge
-
-	label := pad(m.rowLabel(r), l.label)
-	if r.merged {
-		// Styled like the header it replaces, so a session still reads as a
-		// session rather than as a stray window index.
-		label = cGroup.Render(label)
-	}
-	name := cName.Render(pad(m.rowName(r), l.name))
-	path := cDim.Render(pad(padLeft(m.rowPath(r), l.path), l.path))
-
-	var mid string
+	badgeCol := strings.Repeat(" ", maxInt(0, m.badgeW-ansi.StringWidth(badge))) + badge
+	fixed := cursorCells + ansi.StringWidth(indent) + m.badgeW + rightMargin
 	if r.kind == kindPane {
+		fixed += 1 + 1 + agentCells + 6 // glyph, active marker, agent, six spaces
+	} else {
+		fixed += 1 + agentCells + 4 + 2 + 6 // glyph, agent, "NNp ", flags, six spaces
+	}
+	avail := lw - fixed
+	if avail < 20 {
+		avail = 20
+	}
+	labelW := avail * 22 / 100
+	nameW := avail * 34 / 100
+	pathW := avail - labelW - nameW
+	if pathW < 8 {
+		pathW = 8
+	}
+
+	var label, name string
+	if r.kind == kindPane {
+		// In the tree the session is already on the header, so a pane row shows
+		// only its own coordinates.
+		label = r.win.Index + "." + r.pane.Index
+		if !m.opt.Tree {
+			label = r.win.Session + ":" + label
+		}
+		name = strings.TrimSpace(r.pane.Cmd)
+
 		// The active-pane marker gets a column of its own, reserved on every
 		// pane row. Rendered flush against the glyph it read as one smudged
 		// symbol, and appearing only on the active row it shifted that row's
@@ -1279,29 +1039,34 @@ func (m *Model) renderRow(r row, selected bool) string {
 		if r.pane.Active {
 			marker = cFlag.Render("*")
 		}
-		mid = marker + " "
+		return truncateANSI(cursor+cDim.Render(indent)+glyph(r.status)+" "+marker+" "+
+			agentCell(r.agent)+" "+
+			pad(label, labelW)+" "+cName.Render(pad(name, nameW))+" "+
+			cDim.Render(pad(padLeft(tilde(r.pane.Path), pathW), pathW))+" "+
+			badgeCol, lw)
 	}
 
-	tail := ""
-	if l.panes > 0 {
-		tail += fmt.Sprintf("%2dp ", r.win.Panes)
+	label = r.win.Index
+	if !m.opt.Tree {
+		label = r.win.Session + ":" + r.win.Index
 	}
-	if l.flags > 0 {
-		tail += cFlag.Render(pad(rowFlags(r), l.flags)) + " "
+	name = strings.TrimSpace(r.win.Name)
+	flags := ""
+	if r.win.Activity {
+		flags += "!"
+	}
+	if r.win.Zoomed {
+		flags += "z"
 	}
 
-	line := cursor + cDim.Render(indent) + glyph(r.status) + " " + mid +
-		m.agentCol(r) + label + " " + name + " " + tail + path + " " + badgeCol
+	line := cursor + cDim.Render(indent) + glyph(r.status) + " " +
+		agentCell(r.agent) + " " +
+		pad(label, labelW) + " " +
+		cName.Render(pad(name, nameW)) + " " +
+		fmt.Sprintf("%2dp ", r.win.Panes) + cFlag.Render(pad(flags, 2)) + " " +
+		cDim.Render(pad(padLeft(tilde(r.win.Path), pathW), pathW)) + " " +
+		badgeCol
 	return truncateANSI(line, lw)
-}
-
-// agentCol renders the agent column plus its trailing space, or nothing at all
-// when no row in the table has an agent.
-func (m *Model) agentCol(r row) string {
-	if m.lay.agent == 0 {
-		return ""
-	}
-	return agentCell(r.agent) + " "
 }
 
 func tilde(p string) string {
@@ -1382,11 +1147,14 @@ func (m *Model) View() string {
 	// Indent the footer to the same column as the prompt, and give it a blank
 	// line of separation from the list so it reads as a footer rather than
 	// another row.
-	fl := m.footerLines()
-	for i := range fl {
-		fl[i] = footerPad + truncateANSI(fl[i], w-len(footerPad))
+	hl := m.helpLines()
+	for i := range hl {
+		hl[i] = footerPad + hl[i]
 	}
-	help := strings.Join(fl, "\n")
+	help := strings.Join(hl, "\n")
+	if m.status != "" {
+		help = footerPad + cFlag.Render(truncateANSI(m.status, w-len(footerPad)))
+	}
 
 	content := strings.Join([]string{prompt, rule(w), body, "", help}, "\n")
 	return frame("tmux ⇄ kaku", content, w)

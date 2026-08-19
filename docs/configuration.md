@@ -17,20 +17,6 @@ set -g @plugin 'dsaad68/kaku-tab'
 | `@kaku-tab-popup-size-compact` | `60%,70%` | popup size with the preview hidden |
 | `@kaku-tab-preview` | `off` | start with the preview pane; <kbd>Ctrl</kbd>+<kbd>/</kbd> toggles |
 | `@kaku-tab-tree` | `on` | group windows under their session; `off` gives a flat list |
-| `@kaku-tab-merge-single` | `on` | a session with one window renders as one row instead of a header plus its only child |
-| `@kaku-tab-popup-fit` | `on` | shrink the popup to what the list needs; the sizes above become maximums |
-
-### Sizing
-
-The popup sizes are a **maximum**, not a fixed geometry. A list of four rows
-opened at a flat `60%,70%` is seven-tenths empty, and tmux cannot shrink a popup
-afterwards — `display-popup` fixes `-w`/`-h` at creation — so the fit is worked
-out before the picker is drawn. Set `@kaku-tab-popup-fit 'off'` for the old
-behaviour.
-
-Columns are likewise sized to what is in them rather than to a proportion of the
-frame, and a column whose every cell reads the same — the pane count when nothing
-is split, the flags when nothing is flagged — is not drawn at all.
 
 ### Why `M-l`
 
