@@ -157,8 +157,16 @@ that set the state. Not every event carries one:
 | `err` | `StopFailure` | the error type |
 | `ask` | `Notification` | none — that payload carries a type and no text |
 
-Up to three wrapped lines, elided beyond that, and capped at 300 characters when
-stored.
+Only the **first line that says something** is kept. An assistant reply is a
+whole markdown document — headings, code blocks, sometimes a rendered box of its
+own — and flattening the lot onto one line produced nonsense whose box-drawing
+characters landed inside this box and read as a rendering fault. Blank lines,
+code fences and pure line-art rules are skipped, a leading markdown marker is
+shed so the text starts at a word, and any Box Drawing or Block Elements rune
+that survives is dropped.
+
+What is left wraps to at most three lines, elided beyond that, and is capped at
+300 characters when stored.
 
 The message is kept in a **second pane option**, `@kt_agent_msg`, rather than as
 a field of `@kt_agent`: it is free text, and the record's format depends on

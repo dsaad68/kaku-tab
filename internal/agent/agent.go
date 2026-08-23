@@ -182,14 +182,23 @@ func ParseMsg(now State, v string) string {
 	return strings.TrimSpace(msg)
 }
 
-// sanitize makes a message safe to store in a tmux option and to read back
-// through a \x1f-separated format string. Control characters are collapsed
-// rather than escaped: this is a one-line summary, not a transcript.
+// sanitize reduces a hook payload's text to one line worth showing.
+//
+// The text is whatever the agent produced — an assistant reply is a whole
+// markdown document, headings and code blocks and all. Flattening the lot onto
+// one line yields nonsense, and any box-drawing characters in it land inside
+// the picker's own box and read as a rendering fault. So: take the first line
+// that says something, drop the line art, collapse the whitespace, cap it.
 func sanitize(s string) string {
+	line := firstMeaningfulLine(s)
+
 	var b strings.Builder
-	space := true // trim leading whitespace as we go
-	for _, r := range s {
-		if r < 0x20 || r == 0x7f {
+	space := true // also trims the leading whitespace
+	for _, r := range line {
+		switch {
+		case isLineArt(r):
+			continue
+		case r < 0x20 || r == 0x7f:
 			r = ' '
 		}
 		if r == ' ' {
@@ -206,6 +215,52 @@ func sanitize(s string) string {
 		}
 	}
 	return strings.TrimSpace(b.String())
+}
+
+// firstMeaningfulLine picks the first line with prose in it, skipping the
+// blanks, code fences and pure line-art rules that open so many replies, and
+// shedding a leading markdown marker so the text starts at a word.
+func firstMeaningfulLine(s string) string {
+	for _, line := range strings.Split(s, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "```") || strings.HasPrefix(line, "~~~") {
+			continue
+		}
+		if onlyLineArt(line) {
+			continue
+		}
+		return stripMarker(line)
+	}
+	return ""
+}
+
+// stripMarker removes an unambiguous leading markdown marker. Bullets need the
+// trailing space to qualify, so a command line beginning with a flag is left
+// alone.
+func stripMarker(line string) string {
+	switch {
+	case strings.HasPrefix(line, "#"):
+		return strings.TrimSpace(strings.TrimLeft(line, "#"))
+	case strings.HasPrefix(line, ">"):
+		return strings.TrimSpace(strings.TrimLeft(line, ">"))
+	case strings.HasPrefix(line, "- "), strings.HasPrefix(line, "* "):
+		return strings.TrimSpace(line[2:])
+	}
+	return line
+}
+
+// isLineArt reports whether a rune is from the Box Drawing or Block Elements
+// blocks. These are never prose, and inside the picker's box they masquerade as
+// its borders.
+func isLineArt(r rune) bool { return r >= 0x2500 && r <= 0x259f }
+
+func onlyLineArt(line string) bool {
+	for _, r := range line {
+		if r != ' ' && !isLineArt(r) {
+			return false
+		}
+	}
+	return true
 }
 
 // Live reports whether the agent process is still running. This is the backstop

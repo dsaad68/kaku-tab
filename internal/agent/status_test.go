@@ -133,11 +133,77 @@ func TestFormatMsgEmptyCases(t *testing.T) {
 // The value is read back through a \x1f-separated format string and rendered on
 // one line, so control characters have to be gone before it is ever stored.
 func TestMsgSanitized(t *testing.T) {
-	got := ParseMsg(Done, FormatMsg(Done, "line one\nline\ttwo\x1fthree   spaced"))
+	got := ParseMsg(Done, FormatMsg(Done, "one\ttwo\x1fthree   spaced"))
 	if strings.ContainsAny(got, "\n\t\x1f") {
 		t.Errorf("control characters survived: %q", got)
 	}
-	if got != "line one line two three spaced" {
+	if got != "one two three spaced" {
+		t.Errorf("got %q", got)
+	}
+}
+
+// An assistant reply is a whole markdown document. Flattening the lot onto one
+// line produced nonsense, and the box-drawing characters in it landed inside the
+// picker's own box and read as a rendering fault. Only the first line that says
+// something is kept.
+func TestMsgTakesFirstMeaningfulLine(t *testing.T) {
+	reply := "Done. Move onto a row with an agent and you get:\n\n" +
+		"```\n" +
+		"╭─ claude ────────────╮\n" +
+		"│ waiting for permission │\n" +
+		"╰────────────────────────╯\n" +
+		"```\n\n" +
+		"Move off it and the box disappears."
+	got := ParseMsg(Done, FormatMsg(Done, reply))
+	if got != "Done. Move onto a row with an agent and you get:" {
+		t.Errorf("got %q", got)
+	}
+}
+
+// Line art anywhere in the kept line is dropped: one stray ╮ inside the box
+// reads as its border.
+func TestMsgDropsLineArt(t *testing.T) {
+	for _, in := range []string{
+		"result ╭─────╮ here",
+		"▄▄▄ progress ▄▄▄ done",
+		"────────── heading",
+	} {
+		got := ParseMsg(Done, FormatMsg(Done, in))
+		for _, r := range got {
+			if r >= 0x2500 && r <= 0x259f {
+				t.Errorf("line art %q survived in %q", r, got)
+			}
+		}
+		if got == "" {
+			t.Errorf("%q was reduced to nothing", in)
+		}
+	}
+}
+
+// Leading markdown markers are shed so the text starts at a word — but a
+// command that begins with a flag is not a bullet and must survive intact.
+func TestMsgStripsMarkdownMarkers(t *testing.T) {
+	cases := map[string]string{
+		"## Summary of changes": "Summary of changes",
+		"- fixed the resolver":  "fixed the resolver",
+		"* fixed the resolver":  "fixed the resolver",
+		"> quoted note":         "quoted note",
+		"Bash: rm -rf ./build":  "Bash: rm -rf ./build",
+		"Bash: ls -la":          "Bash: ls -la",
+		"-flag-looking-thing":   "-flag-looking-thing",
+	}
+	for in, want := range cases {
+		if got := ParseMsg(Perm, FormatMsg(Perm, in)); got != want {
+			t.Errorf("%q -> %q, want %q", in, got, want)
+		}
+	}
+}
+
+// A reply that opens with a fence, a rule, or blank lines still has to yield
+// its first real sentence.
+func TestMsgSkipsOpeningNoise(t *testing.T) {
+	in := "\n\n```go\nfunc main() {}\n```\n──────\nHere is what changed."
+	if got := ParseMsg(Done, FormatMsg(Done, in)); got != "func main() {}" {
 		t.Errorf("got %q", got)
 	}
 }
