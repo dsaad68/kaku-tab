@@ -125,10 +125,20 @@ header the most actionable among its windows, so a pane blocked three windows
 deep is visible without unfolding anything. Switch to pane mode (<kbd>^p</kbd>)
 for the exact pane.
 
-The column is a fixed two cells and reserved on every row, agent or not: an
+The two glyphs are separated by a space. Flush against each other they read as
+one smudged symbol, which defeats the point of splitting identity from state.
+
+The column is a fixed three cells and reserved on every row, agent or not: an
 indicator drawn only where there is an agent would shift every other column on
 those rows and nowhere else. Every glyph is pinned to one display cell by a
 test — a double-width one would break the table's column budget.
+
+Nothing on screen says what a glyph means, so the footer spells out the selected
+row's agent in words, on whichever row the cursor is on:
+
+```
+ claude · waiting for permission · 2m ago
+```
 
 <kbd>^a</kbd> filters to windows with an agent that wants you — `perm`, `ask`,
 `done` or `err`, but not `busy`. Typing an agent's name in the search box works

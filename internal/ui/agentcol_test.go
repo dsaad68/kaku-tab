@@ -97,10 +97,10 @@ func TestAgentAndStateAreBothShown(t *testing.T) {
 	var sawClaudePerm, sawDevinBusy bool
 	for _, r := range m.rows {
 		cell := ansi.Strip(agentCell(r.agent))
-		if cell == glyphClaude+glyphPerm {
+		if cell == glyphClaude+" "+glyphPerm {
 			sawClaudePerm = true
 		}
-		if cell == glyphDevin+glyphBusy {
+		if cell == glyphDevin+" "+glyphBusy {
 			sawDevinBusy = true
 		}
 	}
@@ -146,5 +146,62 @@ func TestAgentNameIsSearchable(t *testing.T) {
 		if r.kind == kindWindow && r.win.ID == "@2" && !strings.Contains(r.search, "devin") {
 			t.Errorf("window @2 search text %q lacks the agent name", r.search)
 		}
+	}
+}
+
+// The glyphs are compact and nothing on screen says what they mean; the footer
+// is where you find out, for whichever row the cursor is on.
+func TestFooterSpellsOutTheSelectedAgent(t *testing.T) {
+	m := New(agentSample(), Options{Tree: true, SelfTab: "8"})
+	m.width, m.height = 150, 30
+
+	// A row with no agent must not describe one. Counted rather than matched on
+	// wording: the help bar has a "waiting agents" key of its own, and a
+	// substring probe hits that instead.
+	for i, vi := range m.view {
+		if m.rows[vi].agent.Empty() {
+			m.cursor = i
+			if got, want := len(m.footerLines()), len(m.helpLines()); got != want {
+				t.Errorf("footer is %d lines on an agent-free row, want %d (help only)", got, want)
+			}
+			break
+		}
+	}
+
+	// A row with one must name the agent and say what it wants, in words.
+	for i, vi := range m.view {
+		if m.rows[vi].agent.State == agent.Perm {
+			m.cursor = i
+			got := ansi.Strip(strings.Join(m.footerLines(), " "))
+			if !strings.Contains(got, "claude") || !strings.Contains(got, "waiting for permission") {
+				t.Errorf("footer = %q, want the agent and its state named", got)
+			}
+			return
+		}
+	}
+	t.Fatal("no perm row in the sample to select")
+}
+
+// The footer grows by a line when it describes an agent, so the list has to
+// give one back — otherwise the bottom row is drawn over the frame.
+func TestListHeightReservesTheAgentLine(t *testing.T) {
+	m := New(agentSample(), Options{Tree: true, SelfTab: "8"})
+	m.width, m.height = 150, 30
+
+	var plain, withAgent int
+	for i, vi := range m.view {
+		m.cursor = i
+		if m.rows[vi].agent.Empty() {
+			plain = m.listHeight()
+		} else {
+			withAgent = m.listHeight()
+		}
+	}
+	if plain == 0 || withAgent == 0 {
+		t.Fatal("sample lacks both an agent row and an agent-free one")
+	}
+	if withAgent >= plain {
+		t.Errorf("listHeight %d with the agent line, %d without; the line was not reserved",
+			withAgent, plain)
 	}
 }

@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -491,9 +492,28 @@ func (m *Model) helpLines() []string {
 	return helpBarLines(m.helpPairs(), w)
 }
 
+// footerLines is everything below the list: the selected row's agent spelled
+// out, then the help bar. One source of truth, so listHeight reserves exactly
+// the rows View is about to draw — an extra line here without a matching one
+// there draws the last list row over the frame.
+func (m *Model) footerLines() []string {
+	if m.status != "" {
+		return []string{cFlag.Render(m.status)}
+	}
+	var out []string
+	if !m.renaming {
+		if r, ok := m.current(); ok {
+			if words := agentWords(r.agent); words != "" {
+				out = append(out, agentCell(r.agent)+" "+cHead.Render(words))
+			}
+		}
+	}
+	return append(out, m.helpLines()...)
+}
+
 func (m *Model) listHeight() int {
-	// frame top+bottom (2) + prompt + rule + blank + help lines
-	h := m.height - 5 - len(m.helpLines())
+	// frame top+bottom (2) + prompt + rule + blank + footer
+	h := m.height - 5 - len(m.footerLines())
 	if !m.sideBySide() && m.opt.Preview {
 		h = h/2 - 1
 	}
@@ -895,11 +915,16 @@ func (m *Model) badge(st model.Status, tab string, isHeader bool) string {
 	}
 }
 
-// agentCells is the width of the agent column: one cell naming the agent, one
-// naming what it wants. Reserved on every row, agent or not — an indicator
-// drawn only where there is an agent would shift every other column on those
-// rows and nowhere else.
-const agentCells = 2
+// agentCells is the width of the agent column: one cell naming the agent, a
+// space, one cell naming what it wants. The space is not decoration — flush
+// against each other the two glyphs read as a single smudged symbol, which
+// defeats the whole point of splitting identity from state.
+//
+// Reserved on every row, agent or not — an indicator drawn only where there is
+// an agent would shift every other column on those rows and nowhere else. The
+// column budget in renderRow is written in terms of this constant, so widening
+// it here is enough.
+const agentCells = 3
 
 // agentCell renders that column. Always exactly agentCells wide.
 func agentCell(r agent.Record) string {
@@ -923,7 +948,36 @@ func agentCell(r agent.Record) string {
 	default:
 		state = cAgentBusy.Render(glyphBusy)
 	}
-	return id + state
+	return id + " " + state
+}
+
+// agentWords spells out an agent record for the footer. The glyphs are compact,
+// but nothing on screen says what they mean; this is where you find out, for
+// whichever row the cursor is on.
+func agentWords(r agent.Record) string {
+	if r.Empty() {
+		return ""
+	}
+	var what string
+	switch r.State {
+	case agent.Perm:
+		what = "waiting for permission"
+	case agent.Ask:
+		what = "waiting for an answer"
+	case agent.Done:
+		what = "finished a turn"
+	case agent.Err:
+		what = "turn failed"
+	default:
+		what = "working"
+	}
+	out := r.Agent + " · " + what
+	if r.At > 0 {
+		if d := time.Since(time.Unix(r.At, 0)); d >= time.Second {
+			out += " · " + d.Round(time.Second).String() + " ago"
+		}
+	}
+	return out
 }
 
 func glyph(st model.Status) string {
@@ -1147,14 +1201,11 @@ func (m *Model) View() string {
 	// Indent the footer to the same column as the prompt, and give it a blank
 	// line of separation from the list so it reads as a footer rather than
 	// another row.
-	hl := m.helpLines()
-	for i := range hl {
-		hl[i] = footerPad + hl[i]
+	fl := m.footerLines()
+	for i := range fl {
+		fl[i] = footerPad + truncateANSI(fl[i], w-len(footerPad))
 	}
-	help := strings.Join(hl, "\n")
-	if m.status != "" {
-		help = footerPad + cFlag.Render(truncateANSI(m.status, w-len(footerPad)))
-	}
+	help := strings.Join(fl, "\n")
 
 	content := strings.Join([]string{prompt, rule(w), body, "", help}, "\n")
 	return frame("tmux ⇄ kaku", content, w)
