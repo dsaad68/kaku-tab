@@ -256,6 +256,48 @@ func SetPaneOption(pane, name, value string) error {
 	return err
 }
 
+// PaneAgentAt reads one pane's record. Used by the hook to learn what it is
+// about to overwrite: a state that has not changed needs no notification, no
+// window rollup and no status redraw, which is most of the traffic.
+func PaneAgentAt(pane string) agent.Record {
+	out, err := Run("display-message", "-p", "-t", pane, "#{"+agent.PaneOption+"}")
+	if err != nil {
+		return agent.Record{}
+	}
+	return agent.Parse(strings.TrimSpace(out))
+}
+
+// WindowAgents returns the most actionable agent per window, plus the rollup
+// each window currently advertises, in one query.
+//
+// Reading #{@kt_agent_win} in *pane* scope is deliberate: pane options inherit
+// from window options, and no pane ever sets this one, so every pane reports
+// its window's value. That is the same inheritance that makes @kt_agent
+// pane-only, used here on purpose rather than tripped over.
+func WindowAgents() (targets map[string]string, best, current map[string]agent.Record, err error) {
+	rows, err := query("list-panes", "-a", "-F", f(
+		"#{session_name}", "#{window_id}",
+		"#{"+agent.PaneOption+"}", "#{"+agent.WindowOption+"}"))
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	targets = map[string]string{}
+	best = map[string]agent.Record{}
+	current = map[string]agent.Record{}
+	for _, r := range rows {
+		win := at(r, 1)
+		if win == "" {
+			continue
+		}
+		targets[win] = at(r, 0)
+		current[win] = agent.Record{State: agent.State(at(r, 3))}
+		if rec := liveAgent(at(r, 2), ""); !rec.Empty() {
+			best[win] = agent.Best([]agent.Record{best[win], rec})
+		}
+	}
+	return targets, best, current, nil
+}
+
 // SetPaneAgentMsg writes a pane's agent message, clearing the option when there
 // is nothing to say rather than leaving a stale line behind.
 func SetPaneAgentMsg(pane, value string) error {

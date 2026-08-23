@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 )
 
 // PaneOption is the tmux pane option the state is published in.
@@ -86,14 +87,67 @@ type Record struct {
 // Empty reports whether there is no agent here.
 func (r Record) Empty() bool { return r.State == None }
 
-// Attention reports whether this state is one you owe a response to. Busy is
-// the only state that is not: everything else is the agent waiting on you.
-func (r Record) Attention() bool {
-	switch r.State {
+// Attention reports whether a state is one you owe a response to. Busy is the
+// only state that is not: everything else is the agent waiting on you.
+func Attention(st State) bool {
+	switch st {
 	case Perm, Ask, Done, Err:
 		return true
 	default:
 		return false
+	}
+}
+
+// Attention reports whether this record wants something from you.
+func (r Record) Attention() bool { return Attention(r.State) }
+
+// StuckAfter is how long a Busy record may go without an update before it is
+// treated as probably wedged. Every hook event refreshes the timestamp, so a
+// genuinely working agent is never more than a tool call old.
+const StuckAfter = 30 * time.Minute
+
+// Stuck reports whether a working agent has gone quiet for long enough to be
+// suspicious. Only Busy qualifies: the other states are *meant* to sit still.
+func (r Record) Stuck(now time.Time, after time.Duration) bool {
+	if r.State != Busy || r.At <= 0 {
+		return false
+	}
+	return now.Sub(time.Unix(r.At, 0)) > after
+}
+
+// Mark is a one-cell state marker for a terminal tab title, where there is no
+// colour to lean on and very little room.
+func Mark(st State) string {
+	switch st {
+	case Perm, Ask:
+		return "!"
+	case Done:
+		return "✓"
+	case Err:
+		return "✗"
+	case Busy:
+		return "·"
+	default:
+		return ""
+	}
+}
+
+// Words names a state in plain language. Kept here rather than in the picker
+// because the notifier says the same thing, and the two must not drift.
+func Words(st State) string {
+	switch st {
+	case Perm:
+		return "waiting for permission"
+	case Ask:
+		return "waiting for an answer"
+	case Done:
+		return "finished a turn"
+	case Err:
+		return "turn failed"
+	case Busy:
+		return "working"
+	default:
+		return ""
 	}
 }
 

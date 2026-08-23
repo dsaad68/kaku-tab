@@ -34,6 +34,12 @@ type payload struct {
 	ToolName  string         `json:"tool_name"`              // PermissionRequest
 	ToolInput map[string]any `json:"tool_input"`             // PermissionRequest
 	ErrorType string         `json:"error_type"`             // StopFailure
+	// Elicitation, whose field name the reference does not pin down the way it
+	// does the others. Read defensively and take whichever is populated, rather
+	// than guess one and silently show nothing.
+	Message     string `json:"message"`
+	Question    string `json:"question"`
+	Description string `json:"description"`
 }
 
 // Decision is what one hook event asks us to do to the pane's record.
@@ -94,6 +100,17 @@ func Decide(b []byte) Decision {
 	case "PermissionRequest":
 		return Decision{Action: Set, State: Perm, Msg: toolSummary(p.ToolName, p.ToolInput)}
 
+	// An MCP server asking the user something. This is the only event that can
+	// say what the question actually is — Notification/elicitation_dialog
+	// reports that one is open and nothing more.
+	case "Elicitation":
+		return Decision{Action: Set, State: Ask,
+			Msg: firstNonEmpty(p.Message, p.Question, p.Description, p.Prompt)}
+
+	case "ElicitationResult":
+		// Answered or declined; the agent is working again.
+		return Decision{Action: Set, State: Busy}
+
 	case "Notification":
 		switch p.NotifyOn {
 		case "permission_prompt":
@@ -111,6 +128,15 @@ func Decide(b []byte) Decision {
 		return Decision{}
 	}
 	return Decision{}
+}
+
+func firstNonEmpty(vs ...string) string {
+	for _, v := range vs {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 // toolArgKeys are the tool_input fields worth showing, most specific first. A

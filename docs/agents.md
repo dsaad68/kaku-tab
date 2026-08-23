@@ -155,7 +155,8 @@ that set the state. Not every event carries one:
 | `perm` | `PermissionRequest` | the tool and its argument — `Bash: git push` |
 | `done` | `Stop` | the reply that ended the turn |
 | `err` | `StopFailure` | the error type |
-| `ask` | `Notification` | none — that payload carries a type and no text |
+| `busy` | going quiet | a `busy` record untouched for 30 minutes reads as `no activity` — every hook event refreshes the timestamp, so one this old has not made a tool call in half an hour |
+| `ask` | `Elicitation` | the question an MCP server is asking |
 
 Only the **first line that says something** is kept. An assistant reply is a
 whole markdown document — headings, code blocks, sometimes a rendered box of its
@@ -187,6 +188,51 @@ turn of tool calls.
 <kbd>^a</kbd> filters to windows with an agent that wants you — `perm`, `ask`,
 `done` or `err`, but not `busy`. Typing an agent's name in the search box works
 too; the name is part of each row's match text without being drawn.
+
+## Jumping to what wants you
+
+```tmux
+set -g @kaku-tab-agent-key 'M-a'
+```
+
+Jumps straight to the agent that most wants you, no picker in the way. Press it
+again to move to the next one, and again to wrap — so a row of blocked sessions
+is walked with one key rather than four.
+
+The order is the same ranking the picker uses: blocked before failed before
+finished, and oldest first within a rank, since the one that has been waiting
+longest is the one being kept waiting. With nothing waiting it says so and does
+nothing.
+
+## Desktop notification
+
+```tmux
+set -g @kaku-tab-agent-notify 'on'
+```
+
+Fires on the **transition** into a state that wants you, and never on the
+repeats — a turn of tool calls does not re-notify you about the permission you
+already granted. Off by default: a tmux plugin has no business raising system
+notifications until it is asked to.
+
+The body carries the agent's own text, so it is passed to `osascript` as an
+argument rather than spliced into the script. A quote or backslash in a reply
+would otherwise close the AppleScript string literal and let the remainder run
+as script.
+
+## A badge in the window list
+
+`@kt_agent_win` carries the most actionable agent in each window, refreshed
+whenever a pane changes state. Use it in your window format:
+
+```tmux
+set -g window-status-format         "#{?@kt_agent_win,#{@kt_agent_win} ,}#I:#W"
+set -g window-status-current-format "#{?@kt_agent_win,#{@kt_agent_win} ,}#I:#W"
+```
+
+Only the windows whose rollup actually changed are written, because this runs
+from a hook and a `set-option` per window per event would be the most expensive
+thing in the path.
 
 ## The status-bar counter
 

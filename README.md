@@ -197,6 +197,11 @@ kaku-tab install-hooks           # one block in ~/.claude/settings.json, both CL
 ```
 
 ```tmux
+set -g @kaku-tab-agent-key    'M-a'   # jump to whatever wants you; again for the next
+set -g @kaku-tab-agent-notify 'on'    # notify on the transition into waiting
+```
+
+```tmux
 set -g @kaku-tab-agents 'on'
 set -g status-interval  5
 ```
@@ -235,6 +240,7 @@ kaku-tab restore [--windows]      # open a tab per detached session
 kaku-tab prune                    # reap orphaned satellite sessions
 kaku-tab titles [--dry-run]       # retitle tabs after their tmux window
 kaku-tab agents                   # which pane each Claude Code / Devin session is in
+kaku-tab go-agent                 # jump to the agent that wants you
 kaku-tab install-hooks            # register the agent hooks with both CLIs
 ```
 

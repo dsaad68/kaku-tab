@@ -73,6 +73,9 @@ var (
 	cAgentErr  = lipgloss.NewStyle().Foreground(colRed).Bold(true)
 	cAgentDone = lipgloss.NewStyle().Foreground(colGreen).Bold(true)
 	cAgentBusy = lipgloss.NewStyle().Foreground(colMuted)
+	// Working, but not for a long time. Loud enough to notice, not as loud as a
+	// state that is genuinely blocked on you.
+	cAgentStuck = lipgloss.NewStyle().Foreground(colAmber)
 )
 
 // frame draws a rounded box with a title set into the top border.

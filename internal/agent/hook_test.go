@@ -135,3 +135,23 @@ func TestDecideLeavesMessageEmptyWhenNoneCarried(t *testing.T) {
 		}
 	}
 }
+
+// An MCP elicitation is the only event that can say what the question actually
+// is; Notification/elicitation_dialog reports only that one is open. The field
+// name is not pinned down by the reference, so every plausible one is read.
+func TestDecideElicitation(t *testing.T) {
+	for _, field := range []string{"message", "question", "description", "prompt"} {
+		payload := `{"hook_event_name":"Elicitation","` + field + `":"Which branch?"}`
+		d := Decide([]byte(payload))
+		if d.Action != Set || d.State != Ask {
+			t.Errorf("%s -> (%v,%q), want (Set,ask)", payload, d.Action, d.State)
+		}
+		if d.Msg != "Which branch?" {
+			t.Errorf("%s -> msg %q", payload, d.Msg)
+		}
+	}
+	// Answered or declined, so the agent is working again.
+	if d := Decide([]byte(`{"hook_event_name":"ElicitationResult"}`)); d.Action != Set || d.State != Busy {
+		t.Errorf("ElicitationResult -> (%v,%q), want (Set,busy)", d.Action, d.State)
+	}
+}

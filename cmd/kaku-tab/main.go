@@ -11,6 +11,7 @@
 //	                                       a Kaku tab per detached session
 //	kaku-tab hook                          agent lifecycle hook (reads stdin)
 //	kaku-tab agents [--format tmux]        agent panes, or the status counter
+//	kaku-tab go-agent [tty]                jump to whatever is waiting on you
 //	kaku-tab install-hooks                 register the hooks with both CLIs
 package main
 
@@ -125,6 +126,8 @@ func main() {
 		err = hook()
 	case "agents":
 		err = agents(os.Args[2:])
+	case "go-agent":
+		err = goAgent(arg(2))
 	case "install-hooks":
 		err = installHooks(os.Args[2:])
 	case "version", "--version", "-v":
@@ -153,6 +156,7 @@ const usage = `kaku-tab — tmux window ⇄ Kaku tab picker
   hook                   publish agent state for the current pane (reads stdin)
   agents [--format tmux] [--refresh]
                          list agent panes, or render the status-bar counter
+  go-agent [tty]         jump to the agent that wants you; again for the next
   install-hooks [--dry-run]
                          add the agent hooks to ~/.claude/settings.json
   version

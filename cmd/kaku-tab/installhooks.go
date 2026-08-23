@@ -15,7 +15,7 @@ import (
 // written. The two CLIs are subscribed through one shared block and each
 // ignores the events it does not have, so this is the union of both:
 //
-//	Claude Code only  Notification, PostToolBatch, StopFailure
+//	Claude Code only  Notification, PostToolBatch, StopFailure, Elicitation
 //	Devin CLI only    PermissionRequest
 //
 // PreToolUse is deliberately absent. It fires on every single tool call, on the
@@ -27,6 +27,8 @@ var hookEvents = []string{
 	"PostToolUse",
 	"PostToolBatch",
 	"PermissionRequest",
+	"Elicitation",
+	"ElicitationResult",
 	"Notification",
 	"Stop",
 	"StopFailure",

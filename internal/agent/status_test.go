@@ -5,6 +5,7 @@ package agent
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 func testTheme() Theme {
@@ -215,5 +216,56 @@ func TestMsgCapped(t *testing.T) {
 	}
 	if got == "" {
 		t.Error("capping threw the whole message away")
+	}
+}
+
+// Only a working agent can be stuck; the other states are meant to sit still.
+func TestStuckOnlyAppliesToBusy(t *testing.T) {
+	now := time.Unix(1_000_000, 0)
+	old := now.Add(-time.Hour).Unix()
+	for _, st := range []State{Perm, Ask, Done, Err} {
+		if (Record{State: st, At: old}).Stuck(now, StuckAfter) {
+			t.Errorf("%q reported stuck", st)
+		}
+	}
+	if !(Record{State: Busy, At: old}).Stuck(now, StuckAfter) {
+		t.Error("an hour-old busy record is not stuck")
+	}
+	if (Record{State: Busy, At: now.Add(-time.Minute).Unix()}).Stuck(now, StuckAfter) {
+		t.Error("a minute-old busy record reported stuck")
+	}
+	// A record with no timestamp cannot be judged, so it is not accused.
+	if (Record{State: Busy}).Stuck(now, StuckAfter) {
+		t.Error("a record with no timestamp reported stuck")
+	}
+}
+
+// Words and Mark cover every state, and neither may go blank on one — a state
+// with no wording renders as an empty notification or a title marker that
+// silently disappears.
+func TestWordsAndMarkCoverEveryState(t *testing.T) {
+	for _, st := range []State{Busy, Perm, Ask, Done, Err} {
+		if Words(st) == "" {
+			t.Errorf("Words(%q) is empty", st)
+		}
+		if Mark(st) == "" {
+			t.Errorf("Mark(%q) is empty", st)
+		}
+	}
+	if Words(None) != "" || Mark(None) != "" {
+		t.Error("the empty state should describe itself as nothing")
+	}
+}
+
+// Attention is what the notification and the counter both key on, so the two
+// forms must not drift apart.
+func TestAttentionMatchesTheRecordMethod(t *testing.T) {
+	for _, st := range []State{None, Busy, Perm, Ask, Done, Err} {
+		if got, want := (Record{State: st}).Attention(), Attention(st); got != want {
+			t.Errorf("Record.Attention(%q)=%v, Attention(%q)=%v", st, got, st, want)
+		}
+	}
+	if Attention(Busy) {
+		t.Error("working is not something you owe a reply to")
 	}
 }

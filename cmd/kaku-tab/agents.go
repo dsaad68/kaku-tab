@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"regexp"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -49,10 +51,15 @@ func hook() error {
 		return nil
 	}
 
+	// What this pane said a moment ago. A state that has not changed needs no
+	// notification, no window rollup and no status redraw — and steady-state
+	// PostToolUse traffic is almost all of the events we see.
+	prev := tmux.PaneAgentAt(pane)
+
 	if d.Action == agent.Clear {
 		_ = tmux.UnsetPaneOption(pane, agent.PaneOption)
 		_ = tmux.UnsetPaneOption(pane, agent.MsgOption)
-		tmux.RefreshStatus()
+		settled(prev.State, agent.None, agent.Record{})
 		return nil
 	}
 
@@ -78,9 +85,58 @@ func hook() error {
 	// that can talk to the server.
 	if d.Msg != "" && tmux.Option("@kaku-tab-agent-message", "on") == "on" {
 		_ = tmux.SetPaneAgentMsg(pane, agent.FormatMsg(d.State, d.Msg))
+		rec.Msg = d.Msg
 	}
-	tmux.RefreshStatus()
+	settled(prev.State, d.State, rec)
 	return nil
+}
+
+// settled does the work that only matters when a pane actually changed state:
+// tell the user, redraw the counter, and refresh the per-window rollup.
+func settled(from, to agent.State, rec agent.Record) {
+	if from == to {
+		return
+	}
+	notify(from, to, rec)
+	_ = refreshWindows()
+	tmux.RefreshStatus()
+}
+
+// notify raises a desktop notification when a pane starts wanting something
+// from you. Only on the transition into that state, never on the repeats, and
+// never for Busy — which is the state you are not being asked to do anything
+// about.
+//
+// Off by default: a tmux plugin has no business popping system notifications
+// until it is asked to.
+func notify(from, to agent.State, rec agent.Record) {
+	if !agent.Attention(to) || from == to {
+		return
+	}
+	if tmux.Option("@kaku-tab-agent-notify", "off") != "on" {
+		return
+	}
+	body := rec.Agent + " · " + agent.Words(to)
+	if rec.Msg != "" {
+		body += " — " + rec.Msg
+	}
+	// Detached and best-effort: a notifier that is missing, slow or broken must
+	// never be the reason an agent's hook hangs.
+	//
+	// The body is passed as an argument, never spliced into the script. It is
+	// an agent's own output — a prompt, a reply, a command awaiting approval —
+	// and a quote or backslash in it would otherwise close the AppleScript
+	// string literal and let the rest run as script.
+	switch runtime.GOOS {
+	case "darwin":
+		_ = exec.Command("osascript",
+			"-e", "on run argv",
+			"-e", `display notification (item 1 of argv) with title "kaku-tab"`,
+			"-e", "end run",
+			"--", body).Start()
+	default:
+		_ = exec.Command("notify-send", "--", "kaku-tab", body).Start()
+	}
 }
 
 // sweep reads every pane's record, clearing any whose agent process is gone.
@@ -138,26 +194,30 @@ func loadTheme() agent.Theme {
 	}
 }
 
-// refreshWindows writes the per-window rollup for use in tmux window formats.
+// refreshWindows writes the per-window rollup, for use in tmux window formats.
 //
 // Deliberately a different option name from the pane record: tmux pane options
 // inherit from window options, so reusing @kt_agent here would have every
 // agent-free pane in the window read back an agent that is not there.
+//
+// One query in, and only the windows whose rollup actually changed are written
+// — this runs from a hook, and a set-option per window per event would be the
+// most expensive thing in the whole path.
 func refreshWindows() error {
-	ws, err := resolve.Resolve(liveSource{}, resolve.Options{
-		Suffix:     tmux.Option("@kaku-tab-satellite-suffix", model.DefaultSatelliteSuffix),
-		Scope:      "all",
-		WithAgents: true,
-	})
+	targets, best, current, err := tmux.WindowAgents()
 	if err != nil {
 		return err
 	}
-	for _, w := range ws {
-		if w.Agent.Empty() {
-			_ = tmux.UnsetWindowOption(w.Session, w.ID, agent.WindowOption)
+	for win, session := range targets {
+		want := string(best[win].State)
+		if want == string(current[win].State) {
 			continue
 		}
-		_ = tmux.SetWindowOption(w.Session, w.ID, agent.WindowOption, string(w.Agent.State))
+		if want == "" {
+			_ = tmux.UnsetWindowOption(session, win, agent.WindowOption)
+			continue
+		}
+		_ = tmux.SetWindowOption(session, win, agent.WindowOption, want)
 	}
 	return nil
 }

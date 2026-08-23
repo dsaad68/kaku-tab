@@ -979,29 +979,30 @@ func agentCell(r agent.Record) string {
 	case agent.Done:
 		state = cAgentDone.Render(glyphDone)
 	default:
-		state = cAgentBusy.Render(glyphBusy)
+		// A stalled agent still reads as working at a glance, which is the one
+		// case where "working" is misleading.
+		style := cAgentBusy
+		if r.Stuck(time.Now(), agent.StuckAfter) {
+			style = cAgentStuck
+		}
+		state = style.Render(glyphBusy)
 	}
 	return id + " " + state
 }
 
 // agentWords spells out a record's state and age for the agent box. The agent's
-// own name is not repeated here — the box title carries it.
+// own name is not repeated here — the box title carries it. The wording itself
+// lives in internal/agent, so the desktop notification says the same thing.
 func agentWords(r agent.Record) string {
 	if r.Empty() {
 		return ""
 	}
-	var what string
-	switch r.State {
-	case agent.Perm:
-		what = "waiting for permission"
-	case agent.Ask:
-		what = "waiting for an answer"
-	case agent.Done:
-		what = "finished a turn"
-	case agent.Err:
-		what = "turn failed"
-	default:
-		what = "working"
+	what := agent.Words(r.State)
+	if r.Stuck(time.Now(), agent.StuckAfter) {
+		// Every hook event refreshes the timestamp, so a working agent this old
+		// has not made a tool call in half an hour. Say so rather than keep
+		// reporting it as busy.
+		what += " · no activity"
 	}
 	out := what
 	if r.At > 0 {
