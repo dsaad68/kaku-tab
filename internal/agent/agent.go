@@ -271,21 +271,33 @@ func sanitize(s string) string {
 	return strings.TrimSpace(b.String())
 }
 
-// firstMeaningfulLine picks the first line with prose in it, skipping the
-// blanks, code fences and pure line-art rules that open so many replies, and
-// shedding a leading markdown marker so the text starts at a word.
+// firstMeaningfulLine picks the first line with prose in it, skipping blank
+// lines, pure line-art rules, and fenced blocks entire — not merely the fence
+// markers. A reply that opens with a diff or a code block is common, and
+// returning its first line of code put a stray fragment in the box.
+//
+// A reply that is nothing but a code block still has to say something, so the
+// first line inside one is the fallback rather than nothing at all.
 func firstMeaningfulLine(s string) string {
+	fenced, fallback := false, ""
 	for _, line := range strings.Split(s, "\n") {
 		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "```") || strings.HasPrefix(line, "~~~") {
+		if strings.HasPrefix(line, "```") || strings.HasPrefix(line, "~~~") {
+			fenced = !fenced
 			continue
 		}
-		if onlyLineArt(line) {
+		if line == "" || onlyLineArt(line) {
+			continue
+		}
+		if fenced {
+			if fallback == "" {
+				fallback = stripMarker(line)
+			}
 			continue
 		}
 		return stripMarker(line)
 	}
-	return ""
+	return fallback
 }
 
 // stripMarker removes an unambiguous leading markdown marker. Bullets need the

@@ -155,14 +155,16 @@ func TestFooterSpellsOutTheSelectedAgent(t *testing.T) {
 	m := New(agentSample(), Options{Tree: true, SelfTab: "8"})
 	m.width, m.height = 150, 30
 
-	// A row with no agent must not describe one. Counted rather than matched on
-	// wording: the help bar has a "waiting agents" key of its own, and a
-	// substring probe hits that instead.
+	// A row with no agent must not describe one. Probed by the box's own border
+	// rather than by wording: the help bar has a "waiting agents" key of its
+	// own, and a substring probe hits that instead. The line *count* is no
+	// probe either — the footer is padded to a constant height so the list does
+	// not move as the cursor does.
 	for i, vi := range m.view {
 		if m.rows[vi].agent.Empty() {
 			m.cursor = i
-			if got, want := len(m.footerLines()), len(m.helpLines()); got != want {
-				t.Errorf("footer is %d lines on an agent-free row, want %d (help only)", got, want)
+			if got := ansi.Strip(strings.Join(m.footerLines(), "\n")); strings.Contains(got, "╭") {
+				t.Errorf("a box was drawn for an agent-free row:\n%s", got)
 			}
 			break
 		}
@@ -182,27 +184,76 @@ func TestFooterSpellsOutTheSelectedAgent(t *testing.T) {
 	t.Fatal("no perm row in the sample to select")
 }
 
-// The footer grows by a line when it describes an agent, so the list has to
-// give one back — otherwise the bottom row is drawn over the frame.
-func TestListHeightReservesTheAgentLine(t *testing.T) {
-	m := New(agentSample(), Options{Tree: true, SelfTab: "8"})
-	m.width, m.height = 150, 30
-
-	var plain, withAgent int
-	for i, vi := range m.view {
-		m.cursor = i
-		if m.rows[vi].agent.Empty() {
-			plain = m.listHeight()
-		} else {
-			withAgent = m.listHeight()
+// Regression: the agent box is up to six lines and appears only under the
+// cursor, so on a short popup View emitted more lines than the frame had — the
+// title and the prompt scrolled off the top. tmux fixes a popup's height at
+// creation, so there is no growing out of it.
+//
+// 60x17 is the documented compact default (60%,70%) on a 24-row terminal, which
+// is where this was reproduced.
+func TestViewNeverOverflowsTheFrame(t *testing.T) {
+	ws := agentSample()
+	ws[0].Agent.Msg = strings.Repeat("a message long enough to wrap several times ", 6)
+	for _, size := range [][2]int{{60, 17}, {80, 12}, {100, 10}, {150, 40}, {60, 9}} {
+		m := New(ws, Options{Tree: true, SelfTab: "8"})
+		m.width, m.height = size[0], size[1]
+		for i := range m.view {
+			m.cursor = i
+			m.ensureVisible()
+			if got := strings.Count(m.View(), "\n") + 1; got > m.height {
+				t.Errorf("%dx%d row %d: View is %d lines, frame is %d",
+					size[0], size[1], i, got, m.height)
+			}
 		}
 	}
-	if plain == 0 || withAgent == 0 {
-		t.Fatal("sample lacks both an agent row and an agent-free one")
+}
+
+// The footer is held at a constant height as the cursor moves. Sized to the box
+// currently on screen it resized the viewport under your hands, so arrowing onto
+// an agent row scrolled the list several rows in one keypress.
+func TestListHeightDoesNotMoveWithTheCursor(t *testing.T) {
+	ws := agentSample()
+	ws[0].Agent.Msg = "Bash: git push origin main"
+	m := New(ws, Options{Tree: true, SelfTab: "8"})
+	m.width, m.height = 150, 30
+
+	first := m.listHeight()
+	for i := range m.view {
+		m.cursor = i
+		if got := m.listHeight(); got != first {
+			t.Fatalf("listHeight is %d on row %d but %d on row 0", got, i, first)
+		}
 	}
-	if withAgent >= plain {
-		t.Errorf("listHeight %d with the agent line, %d without; the line was not reserved",
-			withAgent, plain)
+}
+
+// Room is held for the box only when there is an agent to put in it, so a list
+// with none is unchanged.
+func TestNoAgentMeansNoReservedBox(t *testing.T) {
+	plain := New(sample(), Options{Tree: true, SelfTab: "8"})
+	plain.width, plain.height = 150, 30
+	withAgents := New(agentSample(), Options{Tree: true, SelfTab: "8"})
+	withAgents.width, withAgents.height = 150, 30
+
+	if plain.footerReserve() != len(plain.helpLines()) {
+		t.Errorf("agent-free list reserved %d rows, want just the help bar (%d)",
+			plain.footerReserve(), len(plain.helpLines()))
+	}
+	if withAgents.footerReserve() <= plain.footerReserve() {
+		t.Errorf("a list with agents reserved %d rows, no more than the %d of one without",
+			withAgents.footerReserve(), plain.footerReserve())
+	}
+}
+
+// However tall the footer wants to be, the list keeps some rows.
+func TestListKeepsAMinimumHeight(t *testing.T) {
+	ws := agentSample()
+	ws[0].Agent.Msg = strings.Repeat("long ", 100)
+	for _, h := range []int{6, 9, 12, 20} {
+		m := New(ws, Options{Tree: true, SelfTab: "8"})
+		m.width, m.height = 60, h
+		if got := m.listHeight(); got < minListRows {
+			t.Errorf("height %d: listHeight %d, want at least %d", h, got, minListRows)
+		}
 	}
 }
 
@@ -218,9 +269,9 @@ func TestAgentBoxFollowsTheCursor(t *testing.T) {
 	for i, vi := range m.view {
 		m.cursor = i
 		if m.rows[vi].agent.Empty() {
-			without = len(m.agentBox())
+			without = len(m.agentBox(maxAgentBox))
 		} else {
-			withAgent = len(m.agentBox())
+			withAgent = len(m.agentBox(maxAgentBox))
 		}
 	}
 	if without != 0 {
@@ -243,7 +294,7 @@ func TestAgentBoxShowsStateAndMessage(t *testing.T) {
 			continue
 		}
 		m.cursor = i
-		got := ansi.Strip(strings.Join(m.agentBox(), "\n"))
+		got := ansi.Strip(strings.Join(m.agentBox(maxAgentBox), "\n"))
 		for _, want := range []string{"claude", "waiting for permission", "git push origin main"} {
 			if !strings.Contains(got, want) {
 				t.Errorf("box missing %q:\n%s", want, got)
@@ -266,7 +317,7 @@ func TestAgentBoxLinesAreUniformWidth(t *testing.T) {
 				continue
 			}
 			m.cursor = i
-			lines := m.agentBox()
+			lines := m.agentBox(maxAgentBox)
 			if len(lines) == 0 {
 				t.Fatalf("width %d: no box", width)
 			}
@@ -296,7 +347,7 @@ func TestAgentBoxCapsMessageLines(t *testing.T) {
 		}
 		m.cursor = i
 		// border top + state line + at most agentBoxLines + border bottom
-		if got, max := len(m.agentBox()), 3+agentBoxLines; got > max {
+		if got, max := len(m.agentBox(maxAgentBox)), maxAgentBox; got > max {
 			t.Errorf("box is %d lines, want at most %d", got, max)
 		}
 		return

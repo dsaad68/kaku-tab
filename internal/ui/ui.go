@@ -492,19 +492,91 @@ func (m *Model) helpLines() []string {
 	return helpBarLines(m.helpPairs(), w)
 }
 
-// footerLines is everything below the list: the selected row's agent spelled
-// out, then the help bar. One source of truth, so listHeight reserves exactly
-// the rows View is about to draw — an extra line here without a matching one
-// there draws the last list row over the frame.
+// minListRows is what the list keeps no matter how tall the footer gets. Below
+// this the picker stops being a picker.
+const minListRows = 3
+
+// maxAgentBox is the tallest the agent box can be: two borders, the state line,
+// and the message budget.
+const maxAgentBox = 3 + agentBoxLines
+
+// boxAllowance is how many rows the agent box may occupy, given what the frame
+// has left after the help bar.
+//
+// Shrinking it beats dropping it: on a short popup the message is the first
+// thing that can go, but "claude · waiting for permission" still fits in three
+// rows and is most of the value. Below three there is no box worth drawing —
+// two of them would be borders.
+func (m *Model) boxAllowance() int {
+	if m.status != "" || !m.anyAgent() {
+		return 0
+	}
+	n := minInt(maxAgentBox, m.frameBudget()-len(m.helpLines())-1)
+	if n < 3 {
+		return 0
+	}
+	return n
+}
+
+// frameBudget is every row below the list that the frame can spare.
+func (m *Model) frameBudget() int {
+	// frame top+bottom (2) + prompt + rule + blank, and the list keeps its own.
+	return maxInt(0, m.height-5-minListRows)
+}
+
+// footerReserve is how many rows are held below the list.
+//
+// Constant as the cursor moves, not sized to the box currently on screen. The
+// box appears and disappears with the cursor, and a footer that grew with it
+// would resize the viewport under your hands — arrowing onto an agent row would
+// scroll the list several rows in one keypress.
+//
+// Room is held for the box only when the table has an agent in it at all, so a
+// list with none looks exactly as it did before any of this existed.
+func (m *Model) footerReserve() int {
+	if m.status != "" {
+		return 1
+	}
+	n := len(m.helpLines())
+	if box := m.boxAllowance(); box > 0 {
+		n += box + 1 // the box, and the blank line under it
+	}
+	// tmux fixes a popup's height at creation, so there is no growing out of
+	// it: whatever the footer wants, the list keeps minListRows.
+	return minInt(n, m.frameBudget())
+}
+
+func (m *Model) anyAgent() bool {
+	for _, r := range m.rows {
+		if !r.agent.Empty() {
+			return true
+		}
+	}
+	return false
+}
+
+// footerLines is everything below the list: the selected row's agent box and
+// the help bar, padded to exactly footerReserve rows so the help stays pinned to
+// the bottom and the list above never moves.
 func (m *Model) footerLines() []string {
+	reserve := m.footerReserve()
+	if reserve == 0 {
+		return nil
+	}
 	if m.status != "" {
 		return []string{cFlag.Render(m.status)}
 	}
-	out := m.agentBox()
+
+	out := m.agentBox(m.boxAllowance())
 	if len(out) > 0 {
 		out = append(out, "")
 	}
-	return append(out, m.helpLines()...)
+	out = append(out, m.helpLines()...)
+	if len(out) > reserve {
+		out = out[len(out)-reserve:]
+	}
+	// Pad at the top, so the help bar sits at the bottom either way.
+	return append(make([]string, reserve-len(out)), out...)
 }
 
 // agentBoxLines is the message budget: enough to read a permission request in
@@ -516,8 +588,8 @@ const agentBoxLines = 3
 // It sits in space the picker was wasting anyway, and it appears and disappears
 // with the cursor — so a list with no agents in it looks exactly as it did
 // before any of this existed.
-func (m *Model) agentBox() []string {
-	if m.renaming {
+func (m *Model) agentBox(allowance int) []string {
+	if m.renaming || allowance < 3 {
 		return nil
 	}
 	r, ok := m.current()
@@ -532,20 +604,22 @@ func (m *Model) agentBox() []string {
 	body := []string{cHead.Render(agentWords(r.agent))}
 	// The message is plain text from a hook payload, already stripped of
 	// control characters when it was stored.
-	if r.agent.Msg != "" {
-		body = append(body, wrapCells(r.agent.Msg, w-3, agentBoxLines)...)
+	// Whatever is left of the allowance after the two borders and the state
+	// line goes to the message.
+	if lines := minInt(agentBoxLines, allowance-3); r.agent.Msg != "" && lines > 0 {
+		body = append(body, wrapCells(r.agent.Msg, w-3, lines)...)
 	}
 	return smallBox(agentCell(r.agent)+" "+cName.Render(r.agent.Agent), body, w)
 }
 
 func (m *Model) listHeight() int {
 	// frame top+bottom (2) + prompt + rule + blank + footer
-	h := m.height - 5 - len(m.footerLines())
+	h := m.height - 5 - m.footerReserve()
 	if !m.sideBySide() && m.opt.Preview {
 		h = h/2 - 1
 	}
-	if h < 3 {
-		h = 3
+	if h < minListRows {
+		h = minListRows
 	}
 	return h
 }
@@ -686,6 +760,11 @@ func (m *Model) updateRename(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Any keypress dismisses the last message. It replaces the whole footer —
+	// help bar and agent box both — so one left standing from an earlier kill or
+	// filter would blank them until something happened to overwrite it.
+	m.status = ""
+
 	switch msg.String() {
 	case "ctrl+c", "esc":
 		m.quitting = true
@@ -782,10 +861,6 @@ func (m *Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.opt.AgentsOnly = !m.opt.AgentsOnly
 		m.build()
 		m.focusRow(keepID, keepHeader)
-		// Cleared on the way out too: left standing, the message would still be
-		// in the footer after the filter was toggled back off and the full list
-		// restored, which reads as a warning about the list you are looking at.
-		m.status = ""
 		if m.opt.AgentsOnly && len(m.view) == 0 {
 			// An empty list after a filter reads as a broken picker. Say why.
 			m.status = "no agent is waiting on you"
@@ -1296,6 +1371,13 @@ func countSelectable(rows []row) int {
 		}
 	}
 	return n
+}
+
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 func maxInt(a, b int) int {

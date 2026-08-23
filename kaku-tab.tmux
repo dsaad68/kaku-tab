@@ -69,7 +69,7 @@ fi
 #
 # Opt-in: unbound unless you name a key, like the search binding above.
 if [ -n "$AGENT_KEY" ]; then
-  tmux bind-key -n "$AGENT_KEY" run-shell -b "$BIN go-agent '#{client_tty}'"
+  tmux bind-key -n "$AGENT_KEY" run-shell -b "$BIN go-agent '#{client_tty}' '#{session_name}'"
 fi
 
 # Agent counter on the right of the status bar. Opt-in: it appends to

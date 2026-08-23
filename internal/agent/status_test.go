@@ -200,11 +200,31 @@ func TestMsgStripsMarkdownMarkers(t *testing.T) {
 	}
 }
 
-// A reply that opens with a fence, a rule, or blank lines still has to yield
-// its first real sentence.
-func TestMsgSkipsOpeningNoise(t *testing.T) {
+// A reply that opens with a fence, a rule, or blank lines still has to yield its
+// first real sentence — the prose *after* the block, not the first line of code
+// inside it. Replies that open with a diff or a snippet are common.
+func TestMsgSkipsFencedBlocksEntire(t *testing.T) {
 	in := "\n\n```go\nfunc main() {}\n```\n──────\nHere is what changed."
-	if got := ParseMsg(Done, FormatMsg(Done, in)); got != "func main() {}" {
+	if got := ParseMsg(Done, FormatMsg(Done, in)); got != "Here is what changed." {
+		t.Errorf("got %q, want the prose after the block", got)
+	}
+}
+
+// ... but a reply that is nothing but a code block still has to say something.
+func TestMsgFallsBackInsideAFence(t *testing.T) {
+	in := "```sh\ngit push --force\n```"
+	if got := ParseMsg(Done, FormatMsg(Done, in)); got != "git push --force" {
+		t.Errorf("got %q, want the fenced line as a fallback", got)
+	}
+	if got := ParseMsg(Done, FormatMsg(Done, "```\n```")); got != "" {
+		t.Errorf("an empty block yielded %q", got)
+	}
+}
+
+// Prose before a block wins over anything inside it.
+func TestMsgPrefersProseBeforeAFence(t *testing.T) {
+	in := "Here is the fix:\n```go\nfunc main() {}\n```"
+	if got := ParseMsg(Done, FormatMsg(Done, in)); got != "Here is the fix:" {
 		t.Errorf("got %q", got)
 	}
 }

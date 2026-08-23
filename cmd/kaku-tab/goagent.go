@@ -32,9 +32,12 @@ type target struct {
 //
 // The ordering is agent.Rank — blocked before failed before finished — so the
 // first press always lands on whatever is costing you the most.
-func goAgent(selfTTY string) error {
+func goAgent(selfTTY, selfSession string) error {
 	suffix := tmux.Option("@kaku-tab-satellite-suffix", model.DefaultSatelliteSuffix)
-	ws, err := resolve.Resolve(liveSource{}, opts("", true))
+	// The client's own session, not "": the session and group scopes resolve
+	// against it, and passing an empty one made every window fall out of scope —
+	// go-agent then reported nothing waiting while an agent sat blocked.
+	ws, err := resolve.Resolve(liveSource{}, opts(selfSession, true))
 	if err != nil {
 		return err
 	}

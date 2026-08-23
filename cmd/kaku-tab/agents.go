@@ -21,10 +21,15 @@ import (
 
 var paneIDRe = regexp.MustCompile(`^%[0-9]+$`)
 
-// maxHookPayload caps what we read from a hook's stdin. The fields we want are
-// in the first few hundred bytes, but a PostToolUse payload can carry a whole
-// file's contents, and a hook must not be the thing that stalls the agent.
-const maxHookPayload = 1 << 20
+// maxHookPayload caps what we read from a hook's stdin, so a runaway payload
+// cannot exhaust memory.
+//
+// Generous on purpose. Truncation is not a graceful degradation here: a cut
+// payload fails to parse, the event is dropped, and PostToolUse is precisely
+// the event that clears a pane out of "waiting for permission" once you approve
+// a call. Losing one to a large Read strands the pane — and go-agent keeps
+// sending you back to it — until some later, smaller event lands.
+const maxHookPayload = 32 << 20
 
 // hook is the publisher: it runs as a child of Claude Code or Devin CLI, learns
 // the pane from the $TMUX_PANE it inherited, and records what the agent is doing
@@ -83,9 +88,17 @@ func hook() error {
 	// Opt-out, because this is the one thing here that stores what you typed:
 	// prompts and tool arguments land in a tmux option, readable by anything
 	// that can talk to the server.
-	if d.Msg != "" && tmux.Option("@kaku-tab-agent-message", "on") == "on" {
+	switch {
+	case d.Msg != "" && tmux.Option("@kaku-tab-agent-message", "on") == "on":
 		_ = tmux.SetPaneAgentMsg(pane, agent.FormatMsg(d.State, d.Msg))
 		rec.Msg = d.Msg
+	case prev.State != d.State:
+		// Entering a state with nothing to say clears whatever was there. The
+		// state tag alone is not enough: it distinguishes states, not turns, so
+		// a second Done reached without any text — an agent_completed
+		// notification, or a Stop with an empty reply — would otherwise
+		// redisplay the *previous* turn's reply as if it were this one's.
+		_ = tmux.UnsetPaneOption(pane, agent.MsgOption)
 	}
 	settled(prev.State, d.State, rec)
 	return nil
@@ -154,6 +167,10 @@ func sweep() (agent.Counts, error) {
 		}
 		if !agent.Live(r) {
 			_ = tmux.UnsetPaneOption(pane, agent.PaneOption)
+			// The message goes with it. Left behind, the next agent to occupy
+			// this pane and reach the same state without text of its own would
+			// display the dead one's reply.
+			_ = tmux.UnsetPaneOption(pane, agent.MsgOption)
 			continue
 		}
 		live = append(live, r)
