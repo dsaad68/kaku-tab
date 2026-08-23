@@ -302,3 +302,43 @@ func TestAgentBoxCapsMessageLines(t *testing.T) {
 		return
 	}
 }
+
+// A header inherits its children's agent, and the child carrying it is the very
+// next line — drawn on both, a one-window session showed the pair twice, one row
+// apart. The record stays on the row so the box still opens; only the glyphs go.
+func TestHeaderDoesNotDrawTheAgentGlyphs(t *testing.T) {
+	m := New(agentSample(), Options{Tree: true, SelfTab: "8"})
+	m.width, m.height = 150, 30
+
+	var checkedHeader, checkedChild bool
+	for _, r := range m.rows {
+		line := ansi.Strip(m.renderRow(r, false))
+		switch r.kind {
+		case kindHeader:
+			if r.agent.Empty() {
+				continue
+			}
+			checkedHeader = true
+			for _, g := range []string{glyphClaude, glyphDevin, glyphPerm, glyphBusy} {
+				if strings.Contains(line, g) {
+					t.Errorf("header %q still draws %q: %s", r.group, g, line)
+				}
+			}
+			// ... but it still knows, so the box opens when the cursor rests here.
+			if agentWords(r.agent) == "" {
+				t.Errorf("header %q lost its agent record", r.group)
+			}
+		default:
+			if r.agent.Empty() {
+				continue
+			}
+			checkedChild = true
+			if !strings.Contains(line, glyphClaude) && !strings.Contains(line, glyphDevin) {
+				t.Errorf("child row lost its agent glyph: %s", line)
+			}
+		}
+	}
+	if !checkedHeader || !checkedChild {
+		t.Fatalf("sample exercised header=%v child=%v, need both", checkedHeader, checkedChild)
+	}
+}

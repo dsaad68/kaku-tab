@@ -120,10 +120,15 @@ never read as one gradient. `busy` is the only muted state, deliberately: it is
 the one thing here you do not owe a response to, and a column that shouted on
 every working agent is one you would learn to ignore.
 
-A window row shows the most actionable agent among its panes, and a session
-header the most actionable among its windows, so a pane blocked three windows
-deep is visible without unfolding anything. Switch to pane mode (<kbd>^p</kbd>)
-for the exact pane.
+A window row shows the most actionable agent among its panes, so a pane blocked
+two panes deep is visible without switching to pane mode (<kbd>^p</kbd>) to find
+which one.
+
+Session headers do **not** draw the glyphs. A header inherits them from its
+children and the child carrying them is the very next line, so for a one-window
+session the pair was drawn twice, one row apart. The header still holds the
+record — fold a session, rest on it, and the agent box tells you what is going
+on inside without unfolding anything.
 
 The two glyphs are separated by a space. Flush against each other they read as
 one smudged symbol, which defeats the point of splitting identity from state.

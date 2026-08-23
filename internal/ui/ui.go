@@ -1064,9 +1064,14 @@ func (m *Model) renderRow(r row, selected bool) string {
 		if r.count == 1 {
 			unit = strings.TrimSuffix(unit, "s")
 		}
+		// No agent glyphs on a header. It inherits them from its children, and
+		// the child carrying them is the very next line — for a one-window
+		// session the pair was drawn twice, one row apart. The record is still
+		// kept on the row, so folding a session and resting on it still opens
+		// the agent box.
 		line := cursor + cGroup.Render(arrow+" "+r.group) + "  " +
 			cDim.Render(fmt.Sprintf("%d %s", r.count, unit)) + "  " +
-			agentCell(r.agent) + " " + m.badge(r.status, r.tabID, true)
+			m.badge(r.status, r.tabID, true)
 		return truncateANSI(line, lw)
 	}
 
