@@ -18,6 +18,7 @@ import (
 	"sort"
 	"strconv"
 
+	"github.com/dsaad68/kaku-tab/internal/agent"
 	"github.com/dsaad68/kaku-tab/internal/model"
 )
 
@@ -38,6 +39,10 @@ type Options struct {
 	Scope       string // "all" | "session" | "group"
 	SelfSession string // reference session for the session/group scopes
 	WithPanes   bool   // populate Window.Panes_
+	// WithAgents rolls each window's panes up into Window.Agent without
+	// attaching the panes themselves, so the default (non-pane) picker can show
+	// an agent column. It costs the same one list-panes query as WithPanes.
+	WithAgents bool
 	// Ignore lists session names to omit entirely, e.g. a throwaway popup
 	// session bound to a key.
 	Ignore []string
@@ -67,7 +72,7 @@ func Resolve(src Source, opt Options) ([]model.Window, error) {
 		return nil, err
 	}
 	var panesByWindow map[string][]model.Pane
-	if opt.WithPanes {
+	if opt.WithPanes || opt.WithAgents {
 		if panesByWindow, err = src.Panes(); err != nil {
 			return nil, err
 		}
@@ -128,6 +133,10 @@ func Resolve(src Source, opt Options) ([]model.Window, error) {
 			w.Status, w.TabID, w.GUIWin, w.ClientSession = model.AttachedHidden, pl.tab, pl.gui, pl.clientSession
 		}
 
+		// The rollup runs whenever panes were fetched, for either reason: a
+		// window row has to be able to say "something in here wants you"
+		// without the user first switching to pane mode.
+		w.Agent = bestAgent(panesByWindow[rw.ID])
 		if opt.WithPanes {
 			w.Panes_ = panesByWindow[rw.ID]
 		}
@@ -141,6 +150,17 @@ func Resolve(src Source, opt Options) ([]model.Window, error) {
 		return numeric(out[i].Index) < numeric(out[j].Index)
 	})
 	return out, nil
+}
+
+// bestAgent picks the most actionable agent among a window's panes, so one pane
+// blocked on a permission prompt surfaces even when three others are merely
+// working.
+func bestAgent(panes []model.Pane) agent.Record {
+	rs := make([]agent.Record, 0, len(panes))
+	for _, p := range panes {
+		rs = append(rs, p.Agent)
+	}
+	return agent.Best(rs)
 }
 
 func inScope(rw model.RawWindow, opt Options) bool {

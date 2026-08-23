@@ -13,6 +13,8 @@ package model
 import (
 	"strings"
 	"unicode"
+
+	"github.com/dsaad68/kaku-tab/internal/agent"
 )
 
 // DefaultSatelliteSuffix separates a base session name from its satellite index.
@@ -80,6 +82,11 @@ type Pane struct {
 	Cmd    string
 	Path   string
 	Active bool
+
+	// Agent is the AI coding agent running in this pane, published by its own
+	// hooks into the pane option. Zero value means none. This is why the pane
+	// is knowable at all: pane_current_command reports "node" for Claude Code.
+	Agent agent.Record
 }
 
 // Window is a resolved tmux window: everything needed to draw a row and to act
@@ -96,6 +103,10 @@ type Window struct {
 	// this, not the base: current-window is per-session, so aiming at the base
 	// would focus the right tab while leaving it on the wrong window.
 	ClientSession string
+
+	// Agent is the most actionable agent record among this window's panes, so a
+	// window row can show "something in here wants you" without pane mode.
+	Agent agent.Record
 
 	Panes_ []Pane // populated only in pane mode
 }

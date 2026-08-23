@@ -16,6 +16,7 @@ opt() { local v; v="$(tmux show-option -gqv "$1")"; [ -n "$v" ] && printf '%s' "
 
 KEY="$(opt @kaku-tab-key 'M-l')"
 SEARCH_KEY="$(opt @kaku-tab-search-key '')"
+AGENT_KEY="$(opt @kaku-tab-agent-key '')"
 TITLES="$(opt @kaku-tab-titles 'off')"
 SIZE="$(opt @kaku-tab-popup-size '90%,85%')"
 W="${SIZE%%,*}"; H="${SIZE##*,}"
@@ -60,6 +61,36 @@ if [ "$TITLES" = "on" ]; then
     tmux set-hook -ga "$ev" "run-shell -b '$BIN titles'"
   done
   "$BIN" titles >/dev/null 2>&1 &
+fi
+
+# Jump straight to the agent that wants you, no picker in the way. Pressing it
+# again advances to the next one, so a row of blocked sessions is walked with one
+# key rather than four.
+#
+# Opt-in: unbound unless you name a key, like the search binding above.
+if [ -n "$AGENT_KEY" ]; then
+  tmux bind-key -n "$AGENT_KEY" run-shell -b "$BIN go-agent '#{client_tty}' '#{session_name}'"
+fi
+
+# Agent counter on the right of the status bar. Opt-in: it appends to
+# status-right, which most people compose by hand.
+#
+# The command prints nothing when no agent is running, so the status bar shows no
+# stray icon or separator the rest of the time — which is why this is a plain
+# #() emitting its own #[fg=...] styling rather than a themed status module.
+#
+# Refresh has two halves. status-interval is only the ceiling on staleness; the
+# `hook` subcommand calls refresh-client -S on every attached client the moment
+# an agent changes state, which is what makes the counter feel immediate. Set
+# `status-interval` to 5 or so for the backstop.
+#
+# The guard makes a config reload idempotent: appending unconditionally would
+# stack a second copy of the segment every time this file is sourced.
+if [ "$(opt @kaku-tab-agents 'off')" = "on" ]; then
+  case "$(tmux show-option -gv status-right 2>/dev/null)" in
+    *"agents --format tmux"*) ;;
+    *) tmux set-option -ag status-right "#($BIN agents --format tmux)" ;;
+  esac
 fi
 
 # No hook is registered for pruning satellite sessions. `set-hook -ga` appends a

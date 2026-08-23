@@ -126,6 +126,7 @@ and press <kbd>Alt</kbd>+<kbd>L</kbd>.
 | <kbd>Shift</kbd>+<kbd>Tab</kbd> | fold or unfold every session |
 | <kbd>Ctrl</kbd>+<kbd>P</kbd> | toggle window ⇄ pane rows |
 | <kbd>Ctrl</kbd>+<kbd>E</kbd> | hide/show detached sessions — leaves only what's on screen |
+| <kbd>Ctrl</kbd>+<kbd>A</kbd> | show only windows where an agent is waiting on you |
 | <kbd>Ctrl</kbd>+<kbd>/</kbd> | show/hide the preview — the popup resizes with it |
 | <kbd>Ctrl</kbd>+<kbd>R</kbd> | rename: the **window** on a child row, the **session** on a header |
 | <kbd>Ctrl</kbd>+<kbd>X</kbd> | kill window |
@@ -180,6 +181,48 @@ switched to, and the window you are in now is pushed one place down — so
 <kbd>Alt</kbd>+<kbd>L</kbd> <kbd>Enter</kbd> toggles back to where you just
 were, alt-tab style.
 
+## Agents
+
+Claude Code and Devin CLI sessions show up as a column in the picker — one glyph
+for which agent, one for what it wants: working, blocked on a permission prompt,
+asking you something, finished, or failed. The tmux status bar gets two counters:
+how many agents want you, and how many are open.
+
+```
+ 󰂚 1   󰚩 3
+```
+
+```sh
+kaku-tab install-hooks           # one block in ~/.claude/settings.json, both CLIs
+```
+
+```tmux
+set -g @kaku-tab-agent-key    'M-a'   # jump to whatever wants you; again for the next
+set -g @kaku-tab-agent-notify 'on'    # notify on the transition into waiting
+```
+
+```tmux
+set -g @kaku-tab-agents 'on'
+set -g status-interval  5
+```
+
+That appends the pills to the end of `status-right`, i.e. the far right of the
+bar. To place them anywhere else, leave the option off and put
+`#(kaku-tab agents --format tmux)` where you want it.
+
+Moving onto a row with an agent opens a box below the list saying what it is
+doing — the prompt it is working on, the command it wants permission for, the
+reply that ended its turn.
+
+The agents report themselves: each CLI's lifecycle hooks run `kaku-tab hook`,
+which records the state on the pane it inherited via `$TMUX_PANE`. Nothing is
+guessed from the process table — `#{pane_current_command}` says `node` for
+Claude Code, and no process name can tell "thinking" from "waiting on you".
+
+Because the state lives in a tmux pane option, it rides in on the `list-panes`
+query the picker already makes, and it disappears with the pane. See
+[docs/agents.md](docs/agents.md).
+
 ## Scrollback search
 
 Set `@kaku-tab-search-key` to get a live grep over every pane's scrollback in
@@ -196,6 +239,9 @@ kaku-tab resolve                  # print the window ⇄ tab join (debugging)
 kaku-tab restore [--windows]      # open a tab per detached session
 kaku-tab prune                    # reap orphaned satellite sessions
 kaku-tab titles [--dry-run]       # retitle tabs after their tmux window
+kaku-tab agents                   # which pane each Claude Code / Devin session is in
+kaku-tab go-agent                 # jump to the agent that wants you
+kaku-tab install-hooks            # register the agent hooks with both CLIs
 ```
 
 `restore` pairs well with
@@ -205,6 +251,7 @@ brings the sessions back, this brings the tabs back.
 ## Docs
 
 - [Design](docs/design.md) — how the join works, and why grouped sessions
+- [Agents](docs/agents.md) — Claude Code / Devin CLI state in the picker and status bar
 - [Configuration](docs/configuration.md) — every option
 - [Troubleshooting](docs/troubleshooting.md)
 

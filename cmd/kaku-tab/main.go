@@ -9,6 +9,10 @@
 //	kaku-tab prune                         reap orphaned satellite sessions
 //	kaku-tab restore [--windows] [--dry-run]
 //	                                       a Kaku tab per detached session
+//	kaku-tab hook                          agent lifecycle hook (reads stdin)
+//	kaku-tab agents [--format tmux]        agent panes, or the status counter
+//	kaku-tab go-agent [tty] [session]      jump to whatever is waiting on you
+//	kaku-tab install-hooks                 register the hooks with both CLIs
 package main
 
 import (
@@ -48,7 +52,11 @@ func opts(selfSession string, withPanes bool) resolve.Options {
 		Scope:       tmux.Option("@kaku-tab-scope", "all"),
 		SelfSession: selfSession,
 		WithPanes:   withPanes,
-		Ignore:      ignored(),
+		// The picker shows an agent column on window rows too, so the rollup is
+		// wanted even when the panes themselves are not. It is the same single
+		// list-panes query either way.
+		WithAgents: true,
+		Ignore:     ignored(),
 	}
 }
 
@@ -114,6 +122,14 @@ func main() {
 		err = restore(os.Args[2:])
 	case "titles":
 		err = titles(len(os.Args) > 2 && os.Args[2] == "--dry-run")
+	case "hook":
+		err = hook()
+	case "agents":
+		err = agents(os.Args[2:])
+	case "go-agent":
+		err = goAgent(arg(2), arg(3))
+	case "install-hooks":
+		err = installHooks(os.Args[2:])
 	case "version", "--version", "-v":
 		fmt.Printf("kaku-tab %s\n", version)
 	case "-h", "--help", "help":
@@ -137,6 +153,13 @@ const usage = `kaku-tab — tmux window ⇄ Kaku tab picker
   prune                  reap orphaned satellite sessions
   restore [--windows] [--dry-run]
   titles [--dry-run]     retitle terminal tabs after their tmux window
+  hook                   publish agent state for the current pane (reads stdin)
+  agents [--format tmux] [--refresh]
+                         list agent panes, or render the status-bar counter
+  go-agent [tty] [session]
+                         jump to the agent that wants you; again for the next
+  install-hooks [--dry-run]
+                         add the agent hooks to ~/.claude/settings.json
   version
 `
 
@@ -278,6 +301,11 @@ func pick(selfTTY, selfSession string) error {
 		hideDetached = restore.HideDetached
 	}
 
+	// Never sticky, not even as a tmux option: this filter can empty the list
+	// entirely, and one that survived the popup would have you reopen it to
+	// find every window gone. It only rides across a preview-toggle relaunch.
+	agentsOnly := resumed && restore.AgentsOnly
+
 	self, _ := os.Executable()
 	ctx := action.Ctx{SelfTTY: selfTTY, Suffix: suffix, AttachSh: self}
 
@@ -296,6 +324,7 @@ func pick(selfTTY, selfSession string) error {
 		MRU:      mruList(sortMode),
 
 		HideDetached: hideDetached,
+		AgentsOnly:   agentsOnly,
 	})
 
 	// The picker owns the popup's terminal; Kaku's own alt-screen is untouched.
@@ -394,16 +423,30 @@ func titles(dry bool) error {
 }
 
 func printResolve() error {
-	ws, err := resolve.Resolve(liveSource{}, opts("", false))
+	// Explicitly every window, whatever @kaku-tab-scope says. This is the
+	// debugging view of the join, and a scoped one would hide exactly the rows
+	// you opened it to look at.
+	o := opts("", false)
+	o.Scope = "all"
+	ws, err := resolve.Resolve(liveSource{}, o)
 	if err != nil {
 		return err
 	}
 	for _, w := range ws {
-		fmt.Printf("%-16s %-5s %-14s idx=%-3s tab=%-3s gui=%-3s client=%-16s %s\n",
+		fmt.Printf("%-16s %-5s %-14s idx=%-3s tab=%-3s gui=%-3s client=%-16s agent=%-12s %s\n",
 			w.Status, w.ID, w.Session, w.Index, dash(w.TabID), dash(w.GUIWin),
-			dash(w.ClientSession), strings.TrimSpace(w.Name))
+			dash(w.ClientSession), dash(agentCol(w)), strings.TrimSpace(w.Name))
 	}
 	return nil
+}
+
+// agentCol formats the agent rollup for `kaku-tab resolve`, which is the
+// debugging view of the join.
+func agentCol(w model.Window) string {
+	if w.Agent.Empty() {
+		return ""
+	}
+	return w.Agent.Agent + "/" + string(w.Agent.State)
 }
 
 func dash(s string) string {

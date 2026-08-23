@@ -89,7 +89,7 @@ driving yourself.
 | Option | Default | Meaning |
 |---|---|---|
 | `@kaku-tab-titles` | `off` | retitle tabs after the tmux window their client shows |
-| `@kaku-tab-title-format` | `%g` | `%s` session · `%g` base session · `%w` window name · `%i` window index |
+| `@kaku-tab-title-format` | `%g` | `%s` session · `%g` base session · `%w` window name · `%i` window index · `%a` agent state (`!` waiting, `✓` finished, `✗` failed, `·` working) |
 
 `%w` is deliberately absent from the default. With tmux `automatic-rename` on,
 every window is named after its foreground process, so `%g · %w` produces a tab
@@ -107,6 +107,43 @@ kaku-tab titles --dry-run
 > If your config already has `set-tab-title` hooks, leave this `off` or remove
 > them first. Both fire on the same events and will fight over the title.
 
+## Agents
+
+Two counters in the status bar — how many Claude Code and Devin CLI sessions are
+waiting on you, and how many are open — plus an agent column in the picker. See [agents.md](agents.md).
+
+| Option | Default | Meaning |
+|---|---|---|
+| `@kaku-tab-agents` | `off` | append the agent counter to `status-right` |
+| `@kaku-tab-agent-key` | *(unset)* | key that jumps to the agent that wants you; press again for the next |
+| `@kaku-tab-agent-notify` | `off` | desktop notification on the transition into a waiting state |
+| `@kaku-tab-agent-message` | `on` | store what the agent is doing — the prompt, the tool awaiting permission, the reply — for the picker's agent box |
+| `@kaku-tab-agent-color` | `@thm_mauve` | pill colour for the "agents open" count |
+| `@kaku-tab-notify-color` | `@thm_peach` | pill colour when something wants you |
+| `@kaku-tab-agent-icon` | 󰚩 | icon for the "agents open" count |
+| `@kaku-tab-notify-icon` | 󰂚 | icon for the notification count |
+
+Off by default because it appends to `status-right`, which most people compose
+by hand. Turning it on is two lines, plus installing the hooks that feed it:
+
+```tmux
+set -g @kaku-tab-agents  'on'
+set -g status-interval   5
+```
+
+```sh
+kaku-tab install-hooks
+```
+
+`status-interval` is only the ceiling on staleness — the hook calls
+`refresh-client -S` the moment an agent changes state, so the count moves as it
+happens.
+
+The plugin appends the segment to the end of `status-right`. To place it
+somewhere else — before a battery module, say — set `@kaku-tab-agents 'off'` and
+add `#(kaku-tab agents --format tmux)` where you want it. See
+[agents.md](agents.md#putting-it-somewhere-else).
+
 ## Full example
 
 ```tmux
@@ -117,6 +154,7 @@ set -g @kaku-tab-open-mode      'reuse'
 set -g @kaku-tab-ignore         'popup,scratch'
 set -g @kaku-tab-popup-size     '90%,85%'
 set -g @kaku-tab-popup-size-compact '60%,70%'
+set -g @kaku-tab-agents         'on'
 
 set -g @plugin 'dsaad68/kaku-tab'
 ```

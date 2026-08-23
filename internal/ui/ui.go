@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -27,6 +28,7 @@ import (
 	"github.com/sahilm/fuzzy"
 
 	"github.com/dsaad68/kaku-tab/internal/action"
+	"github.com/dsaad68/kaku-tab/internal/agent"
 	"github.com/dsaad68/kaku-tab/internal/kaku"
 	"github.com/dsaad68/kaku-tab/internal/model"
 	"github.com/dsaad68/kaku-tab/internal/mru"
@@ -61,6 +63,7 @@ type row struct {
 	count  int    // header only
 	status model.Status
 	tabID  string
+	agent  agent.Record
 	last   bool // last child of its group -> └
 }
 
@@ -87,6 +90,7 @@ type State struct {
 	Preview      bool            `json:"preview"`
 	PaneMode     bool            `json:"pane_mode"`
 	HideDetached bool            `json:"hide_detached"`
+	AgentsOnly   bool            `json:"agents_only"`
 	Collapse     map[string]bool `json:"collapse"`
 }
 
@@ -106,6 +110,12 @@ type Options struct {
 
 	// HideDetached drops sessions with no terminal tab from the list.
 	HideDetached bool
+
+	// AgentsOnly narrows the list to windows holding an agent that wants you —
+	// blocked on permission, asking a question, finished, or failed. A window
+	// whose agent is merely working is not one of them: the point of the filter
+	// is "what is waiting on me", not "where are the agents".
+	AgentsOnly bool
 }
 
 type previewMsg struct {
@@ -170,7 +180,8 @@ func (m *Model) State() State {
 	return State{
 		Query: m.query, Cursor: m.cursor, Offset: m.offset,
 		Preview: m.opt.Preview, PaneMode: m.opt.PaneMode,
-		HideDetached: m.opt.HideDetached, Collapse: m.collapse,
+		HideDetached: m.opt.HideDetached, AgentsOnly: m.opt.AgentsOnly,
+		Collapse: m.collapse,
 	}
 }
 
@@ -191,6 +202,18 @@ func (m *Model) build() {
 				windows = append(windows, w)
 			}
 		}
+	}
+	// Applied after HideDetached, not instead of it: a detached session is
+	// exactly where an agent is most likely to have finished unnoticed, so this
+	// filter must be able to surface one.
+	if m.opt.AgentsOnly {
+		kept := make([]model.Window, 0, len(windows))
+		for _, w := range windows {
+			if w.Agent.Attention() {
+				kept = append(kept, w)
+			}
+		}
+		windows = kept
 	}
 
 	groups := map[string][]model.Window{}
@@ -260,6 +283,7 @@ func (m *Model) build() {
 		// Header inherits the best status among its children, so a session
 		// whose tab is showing something reads as attached at a glance.
 		hstat, htab := model.Detached, ""
+		hagents := make([]agent.Record, 0, len(ws))
 		n := 0
 		for _, w := range ws {
 			if m.opt.PaneMode {
@@ -267,6 +291,7 @@ func (m *Model) build() {
 			} else {
 				n++
 			}
+			hagents = append(hagents, w.Agent)
 			if w.Status > hstat {
 				hstat, htab = w.Status, w.TabID
 			} else if htab == "" && w.TabID != "" {
@@ -276,7 +301,7 @@ func (m *Model) build() {
 		if m.opt.Tree {
 			m.rows = append(m.rows, row{
 				kind: kindHeader, group: g, search: g, count: n,
-				status: hstat, tabID: htab,
+				status: hstat, tabID: htab, agent: agent.Best(hagents),
 				win: pickHeaderWindow(ws, m.opt.Sort == SortMRU),
 			})
 		}
@@ -285,8 +310,8 @@ func (m *Model) build() {
 				for j, p := range w.Panes_ {
 					m.rows = append(m.rows, row{
 						kind: kindPane, group: g, win: w, pane: p,
-						search: strings.Join([]string{w.Session, w.Index, p.Index, p.Cmd, p.Path}, " "),
-						status: w.Status, tabID: w.TabID,
+						search: strings.Join([]string{w.Session, w.Index, p.Index, p.Cmd, p.Path, p.Agent.Agent}, " "),
+						status: w.Status, tabID: w.TabID, agent: p.Agent,
 						last: j == len(w.Panes_)-1,
 					})
 				}
@@ -294,8 +319,10 @@ func (m *Model) build() {
 			}
 			m.rows = append(m.rows, row{
 				kind: kindWindow, group: g, win: w,
-				search: strings.Join([]string{w.Session, w.Index, w.Name, w.Path}, " "),
-				status: w.Status, tabID: w.TabID,
+				// The agent name joins the search text so typing "claude"
+				// narrows to agent windows; it is never rendered as text.
+				search: strings.Join([]string{w.Session, w.Index, w.Name, w.Path, w.Agent.Agent}, " "),
+				status: w.Status, tabID: w.TabID, agent: w.Agent,
 				last: i == len(ws)-1,
 			})
 		}
@@ -440,10 +467,14 @@ func (m *Model) helpPairs() [][2]string {
 	if m.opt.HideDetached {
 		detached = "show detached"
 	}
+	agents := "waiting agents"
+	if m.opt.AgentsOnly {
+		agents = "all windows"
+	}
 	pairs := [][2]string{
 		{"enter", "switch"}, {"^/", preview}, {"^t", "new tab"}, {"tab", "fold"},
-		{"^p", "panes"}, {"^e", detached}, {"^r", "rename"}, {"^x", "kill"},
-		{"^d", "detach"}, {"^u", "clear"},
+		{"^p", "panes"}, {"^e", detached}, {"^a", agents}, {"^r", "rename"},
+		{"^x", "kill"}, {"^d", "detach"}, {"^u", "clear"},
 	}
 	if m.opt.Tree {
 		pairs[3] = [2]string{"tab", "fold (S-tab all)"}
@@ -461,14 +492,134 @@ func (m *Model) helpLines() []string {
 	return helpBarLines(m.helpPairs(), w)
 }
 
+// minListRows is what the list keeps no matter how tall the footer gets. Below
+// this the picker stops being a picker.
+const minListRows = 3
+
+// maxAgentBox is the tallest the agent box can be: two borders, the state line,
+// and the message budget.
+const maxAgentBox = 3 + agentBoxLines
+
+// boxAllowance is how many rows the agent box may occupy, given what the frame
+// has left after the help bar.
+//
+// Shrinking it beats dropping it: on a short popup the message is the first
+// thing that can go, but "claude · waiting for permission" still fits in three
+// rows and is most of the value. Below three there is no box worth drawing —
+// two of them would be borders.
+func (m *Model) boxAllowance() int {
+	if m.status != "" || !m.anyAgent() {
+		return 0
+	}
+	n := minInt(maxAgentBox, m.frameBudget()-len(m.helpLines())-1)
+	if n < 3 {
+		return 0
+	}
+	return n
+}
+
+// frameBudget is every row below the list that the frame can spare.
+func (m *Model) frameBudget() int {
+	// frame top+bottom (2) + prompt + rule + blank, and the list keeps its own.
+	return maxInt(0, m.height-5-minListRows)
+}
+
+// footerReserve is how many rows are held below the list.
+//
+// Constant as the cursor moves, not sized to the box currently on screen. The
+// box appears and disappears with the cursor, and a footer that grew with it
+// would resize the viewport under your hands — arrowing onto an agent row would
+// scroll the list several rows in one keypress.
+//
+// Room is held for the box only when the table has an agent in it at all, so a
+// list with none looks exactly as it did before any of this existed.
+func (m *Model) footerReserve() int {
+	if m.status != "" {
+		return 1
+	}
+	n := len(m.helpLines())
+	if box := m.boxAllowance(); box > 0 {
+		n += box + 1 // the box, and the blank line under it
+	}
+	// tmux fixes a popup's height at creation, so there is no growing out of
+	// it: whatever the footer wants, the list keeps minListRows.
+	return minInt(n, m.frameBudget())
+}
+
+func (m *Model) anyAgent() bool {
+	for _, r := range m.rows {
+		if !r.agent.Empty() {
+			return true
+		}
+	}
+	return false
+}
+
+// footerLines is everything below the list: the selected row's agent box and
+// the help bar, padded to exactly footerReserve rows so the help stays pinned to
+// the bottom and the list above never moves.
+func (m *Model) footerLines() []string {
+	reserve := m.footerReserve()
+	if reserve == 0 {
+		return nil
+	}
+	if m.status != "" {
+		return []string{cFlag.Render(m.status)}
+	}
+
+	out := m.agentBox(m.boxAllowance())
+	if len(out) > 0 {
+		out = append(out, "")
+	}
+	out = append(out, m.helpLines()...)
+	if len(out) > reserve {
+		out = out[len(out)-reserve:]
+	}
+	// Pad at the top, so the help bar sits at the bottom either way.
+	return append(make([]string, reserve-len(out)), out...)
+}
+
+// agentBoxLines is the message budget: enough to read a permission request in
+// full or the gist of a finished turn, without the box crowding out the list.
+const agentBoxLines = 3
+
+// agentBox describes the selected row's agent, or nothing when it has none.
+//
+// It sits in space the picker was wasting anyway, and it appears and disappears
+// with the cursor — so a list with no agents in it looks exactly as it did
+// before any of this existed.
+func (m *Model) agentBox(allowance int) []string {
+	if m.renaming || allowance < 3 {
+		return nil
+	}
+	r, ok := m.current()
+	if !ok || r.agent.Empty() {
+		return nil
+	}
+
+	// Full width, indented to the same column as the help bar beneath it: a box
+	// stopping short of the frame reads as a rendering fault rather than a
+	// choice.
+	w := m.innerW() - 2*len(footerPad)
+	body := []string{cHead.Render(agentWords(r.agent))}
+	// The message is plain text from a hook payload, already stripped of
+	// control characters when it was stored.
+	// Whatever is left of the allowance after the two borders and the state
+	// line goes to the message.
+	if lines := minInt(agentBoxLines, allowance-3); r.agent.Msg != "" && lines > 0 {
+		body = append(body, wrapCells(r.agent.Msg, w-3, lines)...)
+	}
+	return smallBox(agentCell(r.agent)+" "+cName.Render(r.agent.Agent), body, w)
+}
+
 func (m *Model) listHeight() int {
-	// frame top+bottom (2) + prompt + rule + blank + help lines
-	h := m.height - 5 - len(m.helpLines())
+	// frame top+bottom (2) + prompt + rule + blank + footer
+	h := m.height - 5 - m.footerReserve()
 	if !m.sideBySide() && m.opt.Preview {
 		h = h/2 - 1
 	}
-	if h < 3 {
-		h = 3
+	if h < minListRows {
+		h = minListRows
 	}
 	return h
 }
@@ -596,8 +747,11 @@ func (m *Model) updateRename(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.rename = ""
 		return m, m.reloadCmd()
 	case tea.KeyBackspace:
-		if n := len(m.rename); n > 0 {
-			m.rename = m.rename[:n-1]
+		// By rune, not byte — same reason as the query's backspace. This field
+		// opens prefilled with a window name, which is exactly where the
+		// glyphs are.
+		if r := []rune(m.rename); len(r) > 0 {
+			m.rename = string(r[:len(r)-1])
 		}
 	case tea.KeyRunes, tea.KeySpace:
 		m.rename += string(msg.Runes)
@@ -606,6 +760,11 @@ func (m *Model) updateRename(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Any keypress dismisses the last message. It replaces the whole footer —
+	// help bar and agent box both — so one left standing from an earlier kill or
+	// filter would blank them until something happened to overwrite it.
+	m.status = ""
+
 	switch msg.String() {
 	case "ctrl+c", "esc":
 		m.quitting = true
@@ -694,6 +853,20 @@ func (m *Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.focusRow(keepID, keepHeader)
 		return m, m.previewCmd()
 
+	case "ctrl+a":
+		keepID, keepHeader := "", false
+		if r, ok := m.current(); ok {
+			keepID, keepHeader = r.win.ID, r.kind == kindHeader
+		}
+		m.opt.AgentsOnly = !m.opt.AgentsOnly
+		m.build()
+		m.focusRow(keepID, keepHeader)
+		if m.opt.AgentsOnly && len(m.view) == 0 {
+			// An empty list after a filter reads as a broken picker. Say why.
+			m.status = "no agent is waiting on you"
+		}
+		return m, m.previewCmd()
+
 	case "ctrl+x":
 		if r, ok := m.current(); ok && r.kind != kindHeader {
 			if err := action.Kill(r.win, m.opt.Suffix); err != nil {
@@ -735,8 +908,11 @@ func (m *Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 
 	case "backspace":
-		if n := len(m.query); n > 0 {
-			m.query = m.query[:n-1]
+		// By rune, never by byte. A window name here is routinely a nerd-font
+		// glyph or CJK, and shaving one byte off the end of one leaves half a
+		// rune — invalid UTF-8 that renders as mojibake and matches nothing.
+		if r := []rune(m.query); len(r) > 0 {
+			m.query = string(r[:len(r)-1])
 			m.refilter()
 			return m, m.previewCmd()
 		}
@@ -847,6 +1023,71 @@ func (m *Model) badge(st model.Status, tab string, isHeader bool) string {
 	}
 }
 
+// agentCells is the width of the agent column: one cell naming the agent, a
+// space, one cell naming what it wants. The space is not decoration — flush
+// against each other the two glyphs read as a single smudged symbol, which
+// defeats the whole point of splitting identity from state.
+//
+// Reserved on every row, agent or not — an indicator drawn only where there is
+// an agent would shift every other column on those rows and nowhere else. The
+// column budget in renderRow is written in terms of this constant, so widening
+// it here is enough.
+const agentCells = 3
+
+// agentCell renders that column. Always exactly agentCells wide.
+func agentCell(r agent.Record) string {
+	if r.Empty() {
+		return strings.Repeat(" ", agentCells)
+	}
+	id := cIDClaude.Render(glyphClaude)
+	if r.Agent == agent.Devin {
+		id = cIDDevin.Render(glyphDevin)
+	}
+	var state string
+	switch r.State {
+	case agent.Perm:
+		state = cAgentPerm.Render(glyphPerm)
+	case agent.Ask:
+		state = cAgentAsk.Render(glyphAsk)
+	case agent.Err:
+		state = cAgentErr.Render(glyphErr)
+	case agent.Done:
+		state = cAgentDone.Render(glyphDone)
+	default:
+		// A stalled agent still reads as working at a glance, which is the one
+		// case where "working" is misleading.
+		style := cAgentBusy
+		if r.Stuck(time.Now(), agent.StuckAfter) {
+			style = cAgentStuck
+		}
+		state = style.Render(glyphBusy)
+	}
+	return id + " " + state
+}
+
+// agentWords spells out a record's state and age for the agent box. The agent's
+// own name is not repeated here — the box title carries it. The wording itself
+// lives in internal/agent, so the desktop notification says the same thing.
+func agentWords(r agent.Record) string {
+	if r.Empty() {
+		return ""
+	}
+	what := agent.Words(r.State)
+	if r.Stuck(time.Now(), agent.StuckAfter) {
+		// Every hook event refreshes the timestamp, so a working agent this old
+		// has not made a tool call in half an hour. Say so rather than keep
+		// reporting it as busy.
+		what += " · no activity"
+	}
+	out := what
+	if r.At > 0 {
+		if d := time.Since(time.Unix(r.At, 0)); d >= time.Second {
+			out += " · " + d.Round(time.Second).String() + " ago"
+		}
+	}
+	return out
+}
+
 func glyph(st model.Status) string {
 	switch st {
 	case model.Visible:
@@ -898,8 +1139,14 @@ func (m *Model) renderRow(r row, selected bool) string {
 		if r.count == 1 {
 			unit = strings.TrimSuffix(unit, "s")
 		}
+		// No agent glyphs on a header. It inherits them from its children, and
+		// the child carrying them is the very next line — for a one-window
+		// session the pair was drawn twice, one row apart. The record is still
+		// kept on the row, so folding a session and resting on it still opens
+		// the agent box.
 		line := cursor + cGroup.Render(arrow+" "+r.group) + "  " +
-			cDim.Render(fmt.Sprintf("%d %s", r.count, unit)) + "  " + m.badge(r.status, r.tabID, true)
+			cDim.Render(fmt.Sprintf("%d %s", r.count, unit)) + "  " +
+			m.badge(r.status, r.tabID, true)
 		return truncateANSI(line, lw)
 	}
 
@@ -926,9 +1173,9 @@ func (m *Model) renderRow(r row, selected bool) string {
 	badgeCol := strings.Repeat(" ", maxInt(0, m.badgeW-ansi.StringWidth(badge))) + badge
 	fixed := cursorCells + ansi.StringWidth(indent) + m.badgeW + rightMargin
 	if r.kind == kindPane {
-		fixed += 1 + 1 + 5 // glyph, active marker, five single spaces
+		fixed += 1 + 1 + agentCells + 6 // glyph, active marker, agent, six spaces
 	} else {
-		fixed += 1 + 4 + 2 + 5 // glyph, "NNp ", flags, five single spaces
+		fixed += 1 + agentCells + 4 + 2 + 6 // glyph, agent, "NNp ", flags, six spaces
 	}
 	avail := lw - fixed
 	if avail < 20 {
@@ -960,6 +1207,7 @@ func (m *Model) renderRow(r row, selected bool) string {
 			marker = cFlag.Render("*")
 		}
 		return truncateANSI(cursor+cDim.Render(indent)+glyph(r.status)+" "+marker+" "+
+			agentCell(r.agent)+" "+
 			pad(label, labelW)+" "+cName.Render(pad(name, nameW))+" "+
 			cDim.Render(pad(padLeft(tilde(r.pane.Path), pathW), pathW))+" "+
 			badgeCol, lw)
@@ -979,6 +1227,7 @@ func (m *Model) renderRow(r row, selected bool) string {
 	}
 
 	line := cursor + cDim.Render(indent) + glyph(r.status) + " " +
+		agentCell(r.agent) + " " +
 		pad(label, labelW) + " " +
 		cName.Render(pad(name, nameW)) + " " +
 		fmt.Sprintf("%2dp ", r.win.Panes) + cFlag.Render(pad(flags, 2)) + " " +
@@ -1065,14 +1314,11 @@ func (m *Model) View() string {
 	// Indent the footer to the same column as the prompt, and give it a blank
 	// line of separation from the list so it reads as a footer rather than
 	// another row.
-	hl := m.helpLines()
-	for i := range hl {
-		hl[i] = footerPad + hl[i]
+	fl := m.footerLines()
+	for i := range fl {
+		fl[i] = footerPad + truncateANSI(fl[i], w-len(footerPad))
 	}
-	help := strings.Join(hl, "\n")
-	if m.status != "" {
-		help = footerPad + cFlag.Render(truncateANSI(m.status, w-len(footerPad)))
-	}
+	help := strings.Join(fl, "\n")
 
 	content := strings.Join([]string{prompt, rule(w), body, "", help}, "\n")
 	return frame("tmux ⇄ kaku", content, w)
@@ -1125,6 +1371,13 @@ func countSelectable(rows []row) int {
 		}
 	}
 	return n
+}
+
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 func maxInt(a, b int) int {

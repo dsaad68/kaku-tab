@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/dsaad68/kaku-tab/internal/agent"
 	"github.com/dsaad68/kaku-tab/internal/model"
 )
 
@@ -103,10 +104,15 @@ func Windows() ([]model.RawWindow, error) {
 }
 
 // Panes returns every pane in the server, keyed by tmux window id.
+//
+// The agent record rides along in this one query rather than in a second pass:
+// @kt_agent is a pane option, so `list-panes` can report it as just another
+// format field, and agent awareness costs no extra process.
 func Panes() (map[string][]model.Pane, error) {
 	rows, err := query("list-panes", "-a", "-F", f(
 		"#{window_id}", "#{pane_id}", "#{pane_index}",
-		"#{pane_current_command}", "#{pane_current_path}", "#{pane_active}"))
+		"#{pane_current_command}", "#{pane_current_path}", "#{pane_active}",
+		"#{"+agent.PaneOption+"}", "#{"+agent.MsgOption+"}"))
 	if err != nil {
 		return nil, err
 	}
@@ -119,6 +125,7 @@ func Panes() (map[string][]model.Pane, error) {
 		m[w] = append(m[w], model.Pane{
 			ID: at(r, 1), Index: at(r, 2), Cmd: at(r, 3),
 			Path: at(r, 4), Active: boolAt(r, 5),
+			Agent: liveAgent(at(r, 6), at(r, 7)),
 		})
 	}
 	return m, nil
@@ -203,6 +210,161 @@ func CapturePane(target string, historyLines int) (string, error) {
 		return "", err
 	}
 	return string(out), nil
+}
+
+// liveAgent parses a pane's agent record and drops it if the agent process is
+// gone. Pane-scoped storage self-cleans when the pane closes, but an agent
+// killed outright inside a surviving pane leaves a record no SessionEnd hook
+// will ever clear, so the display must not believe it. `kaku-tab agents` is
+// what actually removes it from tmux; see PaneAgents.
+func liveAgent(v, msg string) agent.Record {
+	r := agent.Parse(v)
+	if !agent.Live(r) {
+		return agent.Record{}
+	}
+	// The message is tagged with the state it was written for; ParseMsg drops it
+	// when the pane has since moved on, so an approved permission request stops
+	// being shown the moment the agent resumes.
+	r.Msg = agent.ParseMsg(r.State, msg)
+	return r
+}
+
+// PaneAgents returns every pane's agent record verbatim, keyed by pane id, with
+// no liveness filtering — the sweeper needs to see dead records in order to
+// clear them, which is exactly what Panes() hides.
+func PaneAgents() (map[string]agent.Record, error) {
+	rows, err := query("list-panes", "-a", "-F", f("#{pane_id}", "#{"+agent.PaneOption+"}"))
+	if err != nil {
+		return nil, err
+	}
+	m := make(map[string]agent.Record, len(rows))
+	for _, r := range rows {
+		if id := at(r, 0); id != "" {
+			m[id] = agent.Parse(at(r, 1))
+		}
+	}
+	return m, nil
+}
+
+// SetPaneOption writes a pane-scoped option.
+//
+// -p, always. tmux pane options inherit from window options, so writing
+// @kt_agent at window scope would have every agent-free pane in that window
+// read back an agent that is not there.
+func SetPaneOption(pane, name, value string) error {
+	_, err := Run("set-option", "-p", "-t", pane, name, value)
+	return err
+}
+
+// PaneAgentAt reads one pane's record. Used by the hook to learn what it is
+// about to overwrite: a state that has not changed needs no notification, no
+// window rollup and no status redraw, which is most of the traffic.
+func PaneAgentAt(pane string) agent.Record {
+	out, err := Run("display-message", "-p", "-t", pane, "#{"+agent.PaneOption+"}")
+	if err != nil {
+		return agent.Record{}
+	}
+	return agent.Parse(strings.TrimSpace(out))
+}
+
+// WindowAgents returns the most actionable agent per window, plus the rollup
+// each window currently advertises, in one query.
+//
+// Reading #{@kt_agent_win} in *pane* scope is deliberate: pane options inherit
+// from window options, and no pane ever sets this one, so every pane reports
+// its window's value. That is the same inheritance that makes @kt_agent
+// pane-only, used here on purpose rather than tripped over.
+func WindowAgents() (targets map[string]string, best, current map[string]agent.Record, err error) {
+	rows, err := query("list-panes", "-a", "-F", f(
+		"#{session_name}", "#{window_id}",
+		"#{"+agent.PaneOption+"}", "#{"+agent.WindowOption+"}"))
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	targets = map[string]string{}
+	best = map[string]agent.Record{}
+	current = map[string]agent.Record{}
+	for _, r := range rows {
+		win := at(r, 1)
+		if win == "" {
+			continue
+		}
+		targets[win] = at(r, 0)
+		current[win] = agent.Record{State: agent.State(at(r, 3))}
+		if rec := liveAgent(at(r, 2), ""); !rec.Empty() {
+			best[win] = agent.Best([]agent.Record{best[win], rec})
+		}
+	}
+	return targets, best, current, nil
+}
+
+// SetPaneAgentMsg writes a pane's agent message, clearing the option when there
+// is nothing to say rather than leaving a stale line behind.
+func SetPaneAgentMsg(pane, value string) error {
+	if value == "" {
+		return UnsetPaneOption(pane, agent.MsgOption)
+	}
+	return SetPaneOption(pane, agent.MsgOption, value)
+}
+
+// UnsetPaneOption clears a pane-scoped option.
+func UnsetPaneOption(pane, name string) error {
+	_, err := Run("set-option", "-p", "-u", "-t", pane, name)
+	return err
+}
+
+// SetWindowOption writes a window-scoped option. Session-qualified like every
+// other target here.
+func SetWindowOption(session, windowID, name, value string) error {
+	_, err := Run("set-option", "-w", "-t", Target(session, windowID), name, value)
+	return err
+}
+
+// UnsetWindowOption clears a window-scoped option.
+func UnsetWindowOption(session, windowID, name string) error {
+	_, err := Run("set-option", "-w", "-u", "-t", Target(session, windowID), name)
+	return err
+}
+
+// RefreshStatus redraws the status line on every attached client, which is what
+// makes the agent counter update the moment a hook fires rather than at the next
+// status-interval tick. Every client is named explicitly: a bare refresh-client
+// picks one, and this setup routinely has a client per terminal tab.
+func RefreshStatus() {
+	cs, err := Clients()
+	if err != nil {
+		return
+	}
+	for _, c := range cs {
+		_, _ = Run("refresh-client", "-S", "-t", c.TTY)
+	}
+}
+
+// Options reads several global options in one subprocess.
+//
+// Every tmux.Option is a fork, and the status segment needs a whole palette on
+// a timer. display-message expands them all in a single pass, which keeps the
+// status bar's per-tick cost at one process rather than one per colour.
+func Options(names ...string) map[string]string {
+	if len(names) == 0 {
+		return nil
+	}
+	parts := make([]string, len(names))
+	for i, n := range names {
+		parts[i] = "#{E:" + n + "}"
+	}
+	out, err := Run("display-message", "-p", "-F", f(parts...))
+	if err != nil {
+		return nil
+	}
+	vals := strings.Split(out, FS)
+	m := make(map[string]string, len(names))
+	for i, n := range names {
+		if i < len(vals) && vals[i] != "" {
+			m[n] = vals[i]
+		}
+	}
+	return m
 }
 
 // Option reads a global tmux option, returning def when unset.

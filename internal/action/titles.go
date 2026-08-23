@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/dsaad68/kaku-tab/internal/agent"
 	"github.com/dsaad68/kaku-tab/internal/kaku"
 	"github.com/dsaad68/kaku-tab/internal/model"
 	"github.com/dsaad68/kaku-tab/internal/tmux"
@@ -51,17 +52,25 @@ func SyncTitles(format, suffix string, dry bool) (map[string]string, error) {
 	if err != nil {
 		return nil, err
 	}
+	// The agent rollup rides along in this query: a client format resolves
+	// against the window that client is showing, which is exactly the window
+	// being titled.
 	rows, err := tmux.Run("list-clients", "-F",
-		"#{client_tty}"+tmux.FS+"#{window_name}"+tmux.FS+"#{window_index}")
+		"#{client_tty}"+tmux.FS+"#{window_name}"+tmux.FS+"#{window_index}"+
+			tmux.FS+"#{"+agent.WindowOption+"}")
 	if err != nil {
 		return nil, err
 	}
 
-	meta := map[string][2]string{} // tty -> {window name, index}
+	meta := map[string][3]string{} // tty -> {window name, index, agent state}
 	for _, line := range strings.Split(rows, "\n") {
 		f := strings.Split(line, tmux.FS)
 		if len(f) >= 3 {
-			meta[f[0]] = [2]string{f[1], f[2]}
+			state := ""
+			if len(f) >= 4 {
+				state = f[3]
+			}
+			meta[f[0]] = [3]string{f[1], f[2], state}
 		}
 	}
 
@@ -79,6 +88,7 @@ func SyncTitles(format, suffix string, dry bool) (map[string]string, error) {
 			"%g", model.BaseSession(c.Session, suffix),
 			"%w", squeeze(m[0]),
 			"%i", m[1],
+			"%a", agent.Mark(agent.State(m[2])),
 		)
 		title := strings.TrimSpace(r.Replace(format))
 		out[tab] = title
