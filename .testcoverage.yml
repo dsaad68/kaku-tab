@@ -21,18 +21,22 @@ exclude:
 threshold:
   file: 0
   package: 0
-  total: 40
+  total: 65
 
 override:
   # The join. Everything else is presentation or plumbing around the table it
   # produces, so this is the number that matters most.
   - path: ^internal/resolve$
-    threshold: 85
+    threshold: 88
   - path: ^internal/ui$
-    threshold: 40
+    threshold: 68
   - path: ^internal/mru$
     threshold: 80
   # The agent event mapping: pure functions over hook payloads, and the place a
   # wrong mapping would be invisible until an agent sat blocked with no badge.
   - path: ^internal/agent$
+    threshold: 95
+  # The satellite naming rules. A session is tied to its base by name alone, so
+  # a bug here orphans tabs or lists a grouped session's windows twice.
+  - path: ^internal/model$
     threshold: 90

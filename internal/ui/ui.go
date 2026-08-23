@@ -673,8 +673,11 @@ func (m *Model) updateRename(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.rename = ""
 		return m, m.reloadCmd()
 	case tea.KeyBackspace:
-		if n := len(m.rename); n > 0 {
-			m.rename = m.rename[:n-1]
+		// By rune, not byte — same reason as the query's backspace. This field
+		// opens prefilled with a window name, which is exactly where the
+		// glyphs are.
+		if r := []rune(m.rename); len(r) > 0 {
+			m.rename = string(r[:len(r)-1])
 		}
 	case tea.KeyRunes, tea.KeySpace:
 		m.rename += string(msg.Runes)
@@ -830,8 +833,11 @@ func (m *Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 
 	case "backspace":
-		if n := len(m.query); n > 0 {
-			m.query = m.query[:n-1]
+		// By rune, never by byte. A window name here is routinely a nerd-font
+		// glyph or CJK, and shaving one byte off the end of one leaves half a
+		// rune — invalid UTF-8 that renders as mojibake and matches nothing.
+		if r := []rune(m.query); len(r) > 0 {
+			m.query = string(r[:len(r)-1])
 			m.refilter()
 			return m, m.previewCmd()
 		}
