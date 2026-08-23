@@ -37,9 +37,10 @@ the `list-panes` query resolve already makes. See [docs/agents.md](docs/agents.m
   ambiguous once a grouped session shares the window.
 - Never `set-hook -g` — it replaces the user's hooks. Use `-ga`.
 - Never key on `$WEZTERM_PANE`; it goes stale. Join on the tty.
-- Agent state (`@kt_agent`) is set with `set-option -p` only. tmux pane options
-  inherit from window options, so one window-scoped write has every agent-free
-  pane in that window report an agent. The rollup is a separate option name.
+- Agent state (`@kt_agent`, `@kt_agent_msg`) is set with `set-option -p` only.
+  tmux pane options inherit from window options, so one window-scoped write has
+  every agent-free pane in that window report an agent. The rollup is a separate
+  option name for the same reason.
 - `kaku-tab hook` must never print to stdout or exit non-zero. On
   `PermissionRequest` and `PreToolUse` both are decision channels, so a status
   reporter that got either wrong would silently veto the user's own tool calls.

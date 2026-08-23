@@ -27,6 +27,19 @@ import (
 // rollup deliberately uses a different name, see WindowOption.
 const PaneOption = "@kt_agent"
 
+// MsgOption carries the human-readable context for a pane's agent state: the
+// prompt being worked on, the tool awaiting permission, the reply that ended the
+// turn.
+//
+// A second option rather than a field in PaneOption, because a message is free
+// text and PaneOption's format depends on every field being from a fixed
+// alphabet. Both are pane-scoped, so both are written with -p only.
+const MsgOption = "@kt_agent_msg"
+
+// MaxMsg caps what is stored. A whole assistant reply in a tmux option helps
+// nobody, and the box shows a few lines at most.
+const MaxMsg = 300
+
 // WindowOption is the per-window rollup, written only by `kaku-tab agents
 // --refresh` for use in tmux window formats. It is a distinct name precisely
 // because setting PaneOption at window scope would corrupt the per-pane read.
@@ -62,6 +75,12 @@ type Record struct {
 	State State
 	PID   int   // the hook process's parent, i.e. the agent itself
 	At    int64 // unix seconds, for display only
+
+	// Msg is context for State, and belongs to it: it is stored tagged with the
+	// state it was written for and dropped on read when the two disagree. That
+	// is what stops a permission request from still being displayed after the
+	// approval moved the pane back to Busy.
+	Msg string
 }
 
 // Empty reports whether there is no agent here.
@@ -139,6 +158,54 @@ func Parse(s string) Record {
 		return Record{}
 	}
 	return Record{Agent: name, State: st, PID: pid, At: at}
+}
+
+// FormatMsg renders the message option, tagging it with the state it describes.
+// Returns "" when there is nothing worth storing, which the caller writes as an
+// unset rather than an empty option.
+func FormatMsg(st State, msg string) string {
+	msg = sanitize(msg)
+	if st == None || msg == "" {
+		return ""
+	}
+	return string(st) + ":" + msg
+}
+
+// ParseMsg reads the message option back, given the state the pane currently
+// reports. A message tagged with a different state is stale — the pane has moved
+// on since it was written — and is discarded.
+func ParseMsg(now State, v string) string {
+	tag, msg, ok := strings.Cut(v, ":")
+	if !ok || State(tag) != now || now == None {
+		return ""
+	}
+	return strings.TrimSpace(msg)
+}
+
+// sanitize makes a message safe to store in a tmux option and to read back
+// through a \x1f-separated format string. Control characters are collapsed
+// rather than escaped: this is a one-line summary, not a transcript.
+func sanitize(s string) string {
+	var b strings.Builder
+	space := true // trim leading whitespace as we go
+	for _, r := range s {
+		if r < 0x20 || r == 0x7f {
+			r = ' '
+		}
+		if r == ' ' {
+			if space {
+				continue
+			}
+			space = true
+		} else {
+			space = false
+		}
+		b.WriteRune(r)
+		if b.Len() >= MaxMsg {
+			break
+		}
+	}
+	return strings.TrimSpace(b.String())
 }
 
 // Live reports whether the agent process is still running. This is the backstop

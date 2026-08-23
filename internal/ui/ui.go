@@ -500,15 +500,42 @@ func (m *Model) footerLines() []string {
 	if m.status != "" {
 		return []string{cFlag.Render(m.status)}
 	}
-	var out []string
-	if !m.renaming {
-		if r, ok := m.current(); ok {
-			if words := agentWords(r.agent); words != "" {
-				out = append(out, agentCell(r.agent)+" "+cHead.Render(words))
-			}
-		}
+	out := m.agentBox()
+	if len(out) > 0 {
+		out = append(out, "")
 	}
 	return append(out, m.helpLines()...)
+}
+
+// agentBoxLines is the message budget: enough to read a permission request in
+// full or the gist of a finished turn, without the box crowding out the list.
+const agentBoxLines = 3
+
+// agentBox describes the selected row's agent, or nothing when it has none.
+//
+// It sits in space the picker was wasting anyway, and it appears and disappears
+// with the cursor — so a list with no agents in it looks exactly as it did
+// before any of this existed.
+func (m *Model) agentBox() []string {
+	if m.renaming {
+		return nil
+	}
+	r, ok := m.current()
+	if !ok || r.agent.Empty() {
+		return nil
+	}
+
+	// Full width, indented to the same column as the help bar beneath it: a box
+	// stopping short of the frame reads as a rendering fault rather than a
+	// choice.
+	w := m.innerW() - 2*len(footerPad)
+	body := []string{cHead.Render(agentWords(r.agent))}
+	// The message is plain text from a hook payload, already stripped of
+	// control characters when it was stored.
+	if r.agent.Msg != "" {
+		body = append(body, wrapCells(r.agent.Msg, w-3, agentBoxLines)...)
+	}
+	return smallBox(agentCell(r.agent)+" "+cName.Render(r.agent.Agent), body, w)
 }
 
 func (m *Model) listHeight() int {
@@ -951,9 +978,8 @@ func agentCell(r agent.Record) string {
 	return id + " " + state
 }
 
-// agentWords spells out an agent record for the footer. The glyphs are compact,
-// but nothing on screen says what they mean; this is where you find out, for
-// whichever row the cursor is on.
+// agentWords spells out a record's state and age for the agent box. The agent's
+// own name is not repeated here — the box title carries it.
 func agentWords(r agent.Record) string {
 	if r.Empty() {
 		return ""
@@ -971,7 +997,7 @@ func agentWords(r agent.Record) string {
 	default:
 		what = "working"
 	}
-	out := r.Agent + " · " + what
+	out := what
 	if r.At > 0 {
 		if d := time.Since(time.Unix(r.At, 0)); d >= time.Second {
 			out += " · " + d.Round(time.Second).String() + " ago"

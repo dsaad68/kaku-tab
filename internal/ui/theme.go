@@ -7,6 +7,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/mattn/go-runewidth"
 )
 
 // Adaptive so the picker is legible on a light terminal too. Kaku runs at 0.7
@@ -106,6 +107,77 @@ func frame(title, content string, w int) string {
 	}
 	out.WriteString(cBorder.Render(b.BottomLeft + strings.Repeat(b.Bottom, w) + b.BottomRight))
 	return out.String()
+}
+
+// smallBox draws a titled box around body lines, sized to w display cells.
+//
+// Deliberately not frame(): that one titles the whole picker and is measured
+// against the popup width. This is an inline panel, and its lines are padded to
+// the same width so a short message does not leave a ragged right border.
+func smallBox(title string, body []string, w int) []string {
+	b := lipgloss.RoundedBorder()
+	if w < 8 {
+		w = 8
+	}
+	inner := w - 2
+
+	tw := ansi.StringWidth(title)
+	fill := inner - tw - 3 // "─ " before the title, " " after
+	if fill < 0 {
+		fill = 0
+	}
+	out := []string{
+		cBorder.Render(b.TopLeft+b.Top+" ") + title +
+			cBorder.Render(" "+strings.Repeat(b.Top, fill)+b.TopRight),
+	}
+	for _, line := range body {
+		out = append(out, cBorder.Render(b.Left)+padToWidth(" "+line, inner)+cBorder.Render(b.Right))
+	}
+	return append(out, cBorder.Render(b.BottomLeft+strings.Repeat(b.Bottom, inner)+b.BottomRight))
+}
+
+// wrapCells breaks plain text onto at most max lines of w display cells,
+// marking the last one with an ellipsis when there was more. Measured with
+// runewidth rather than ansi.StringWidth because this text carries no styling —
+// it came out of a hook payload.
+func wrapCells(text string, w, max int) []string {
+	if w < 4 || max < 1 {
+		return nil
+	}
+	var lines []string
+	cur, cut := "", false
+
+	for _, word := range strings.Fields(text) {
+		// A word wider than the whole line can never fit; cut it rather than
+		// let it overflow the box.
+		if runewidth.StringWidth(word) > w {
+			word = runewidth.Truncate(word, w, "…")
+		}
+		cand := word
+		if cur != "" {
+			cand = cur + " " + word
+		}
+		if runewidth.StringWidth(cand) <= w {
+			cur = cand
+			continue
+		}
+		lines = append(lines, cur)
+		if len(lines) == max {
+			cut = true
+			cur = ""
+			break
+		}
+		cur = word
+	}
+	if cur != "" {
+		lines = append(lines, cur)
+	}
+
+	if cut && len(lines) > 0 {
+		last := lines[len(lines)-1]
+		lines[len(lines)-1] = runewidth.Truncate(last, w-1, "") + "…"
+	}
+	return lines
 }
 
 // rule is a horizontal divider.

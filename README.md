@@ -205,6 +205,10 @@ That appends the pills to the end of `status-right`, i.e. the far right of the
 bar. To place them anywhere else, leave the option off and put
 `#(kaku-tab agents --format tmux)` where you want it.
 
+Moving onto a row with an agent opens a box below the list saying what it is
+doing — the prompt it is working on, the command it wants permission for, the
+reply that ended its turn.
+
 The agents report themselves: each CLI's lifecycle hooks run `kaku-tab hook`,
 which records the state on the pane it inherited via `$TMUX_PANE`. Nothing is
 guessed from the process table — `#{pane_current_command}` says `node` for

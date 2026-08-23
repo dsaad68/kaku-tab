@@ -38,7 +38,7 @@ The one case that does not self-heal is an agent killed outright — no
 is for: a record whose process is gone reads as absent, and `kaku-tab agents`
 clears it.
 
-> **`@kt_agent` is only ever set with `-p`.** From `tmux(1)`: *"Pane options
+> **`@kt_agent` and `@kt_agent_msg` are only ever set with `-p`.** From `tmux(1)`: *"Pane options
 > inherit from window options."* Set it at window scope even once and every
 > agent-free pane in that window reads back an agent that is not there. The
 > per-window rollup is deliberately a different option, `@kt_agent_win`.
@@ -133,12 +133,48 @@ indicator drawn only where there is an agent would shift every other column on
 those rows and nowhere else. Every glyph is pinned to one display cell by a
 test — a double-width one would break the table's column budget.
 
-Nothing on screen says what a glyph means, so the footer spells out the selected
-row's agent in words, on whichever row the cursor is on:
+### The agent box
+
+Nothing on screen says what a glyph means, so moving onto a row with an agent
+opens a box below the list — and moving off it closes the box again. A list with
+no agents in it looks exactly as it did before any of this existed.
 
 ```
- claude · waiting for permission · 2m ago
+╭─  claude ───────────────────────────────────────────────╮
+│ waiting for permission · 2m ago                          │
+│ Bash: git push origin main --force-with-lease            │
+╰──────────────────────────────────────────────────────────╯
 ```
+
+The second line is what the agent is actually doing, taken from the hook payload
+that set the state. Not every event carries one:
+
+| State | From | Message |
+|---|---|---|
+| `busy` | `UserPromptSubmit` | the prompt you gave it |
+| `perm` | `PermissionRequest` | the tool and its argument — `Bash: git push` |
+| `done` | `Stop` | the reply that ended the turn |
+| `err` | `StopFailure` | the error type |
+| `ask` | `Notification` | none — that payload carries a type and no text |
+
+Up to three wrapped lines, elided beyond that, and capped at 300 characters when
+stored.
+
+The message is kept in a **second pane option**, `@kt_agent_msg`, rather than as
+a field of `@kt_agent`: it is free text, and the record's format depends on
+every field coming from a fixed alphabet. It is stored tagged with the state it
+describes and dropped on read when the two disagree — which is what stops a
+permission request from still being displayed after your approval has moved the
+pane back to `busy`. Control characters are stripped before it is stored, since
+it is read back through a `\x1f`-separated format string.
+
+Events that carry no text leave the option alone, so a prompt survives a whole
+turn of tool calls.
+
+> This is the one part of kaku-tab that stores what you typed. Prompts and tool
+> arguments land in a tmux option, readable by anything that can talk to the
+> server. `set -g @kaku-tab-agent-message 'off'` keeps the box and drops the
+> message line.
 
 <kbd>^a</kbd> filters to windows with an agent that wants you — `perm`, `ask`,
 `done` or `err`, but not `busy`. Typing an agent's name in the search box works

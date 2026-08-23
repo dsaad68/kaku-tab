@@ -37,8 +37,8 @@ func hook() error {
 	// rejects it and we exit quietly. The hook is never the thing that fails an
 	// agent's turn.
 	body, _ := io.ReadAll(io.LimitReader(os.Stdin, maxHookPayload))
-	act, state := agent.Decide(body)
-	if act == agent.Ignore {
+	d := agent.Decide(body)
+	if d.Action == agent.Ignore {
 		return nil
 	}
 
@@ -49,8 +49,9 @@ func hook() error {
 		return nil
 	}
 
-	if act == agent.Clear {
+	if d.Action == agent.Clear {
 		_ = tmux.UnsetPaneOption(pane, agent.PaneOption)
+		_ = tmux.UnsetPaneOption(pane, agent.MsgOption)
 		tmux.RefreshStatus()
 		return nil
 	}
@@ -61,11 +62,23 @@ func hook() error {
 	// immediately, and the record would read as dead the moment it was written.
 	rec := agent.Record{
 		Agent: agent.Detect(os.Getenv),
-		State: state,
+		State: d.State,
 		PID:   os.Getppid(),
 		At:    time.Now().Unix(),
 	}
 	_ = tmux.SetPaneOption(pane, agent.PaneOption, agent.Format(rec))
+
+	// The message is only touched by events that carry one. Events that do not
+	// leave it alone, and the state tag on it decides whether it is still shown
+	// — so the prompt survives a whole turn of tool calls, while a permission
+	// request stops being displayed the moment the approval moves the state on.
+	//
+	// Opt-out, because this is the one thing here that stores what you typed:
+	// prompts and tool arguments land in a tmux option, readable by anything
+	// that can talk to the server.
+	if d.Msg != "" && tmux.Option("@kaku-tab-agent-message", "on") == "on" {
+		_ = tmux.SetPaneAgentMsg(pane, agent.FormatMsg(d.State, d.Msg))
+	}
 	tmux.RefreshStatus()
 	return nil
 }

@@ -112,7 +112,7 @@ func Panes() (map[string][]model.Pane, error) {
 	rows, err := query("list-panes", "-a", "-F", f(
 		"#{window_id}", "#{pane_id}", "#{pane_index}",
 		"#{pane_current_command}", "#{pane_current_path}", "#{pane_active}",
-		"#{"+agent.PaneOption+"}"))
+		"#{"+agent.PaneOption+"}", "#{"+agent.MsgOption+"}"))
 	if err != nil {
 		return nil, err
 	}
@@ -125,7 +125,7 @@ func Panes() (map[string][]model.Pane, error) {
 		m[w] = append(m[w], model.Pane{
 			ID: at(r, 1), Index: at(r, 2), Cmd: at(r, 3),
 			Path: at(r, 4), Active: boolAt(r, 5),
-			Agent: liveAgent(at(r, 6)),
+			Agent: liveAgent(at(r, 6), at(r, 7)),
 		})
 	}
 	return m, nil
@@ -217,11 +217,15 @@ func CapturePane(target string, historyLines int) (string, error) {
 // killed outright inside a surviving pane leaves a record no SessionEnd hook
 // will ever clear, so the display must not believe it. `kaku-tab agents` is
 // what actually removes it from tmux; see PaneAgents.
-func liveAgent(v string) agent.Record {
+func liveAgent(v, msg string) agent.Record {
 	r := agent.Parse(v)
 	if !agent.Live(r) {
 		return agent.Record{}
 	}
+	// The message is tagged with the state it was written for; ParseMsg drops it
+	// when the pane has since moved on, so an approved permission request stops
+	// being shown the moment the agent resumes.
+	r.Msg = agent.ParseMsg(r.State, msg)
 	return r
 }
 
@@ -250,6 +254,15 @@ func PaneAgents() (map[string]agent.Record, error) {
 func SetPaneOption(pane, name, value string) error {
 	_, err := Run("set-option", "-p", "-t", pane, name, value)
 	return err
+}
+
+// SetPaneAgentMsg writes a pane's agent message, clearing the option when there
+// is nothing to say rather than leaving a stale line behind.
+func SetPaneAgentMsg(pane, value string) error {
+	if value == "" {
+		return UnsetPaneOption(pane, agent.MsgOption)
+	}
+	return SetPaneOption(pane, agent.MsgOption, value)
 }
 
 // UnsetPaneOption clears a pane-scoped option.

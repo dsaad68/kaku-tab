@@ -115,6 +115,7 @@ waiting on you, and how many are open — plus an agent column in the picker. Se
 | Option | Default | Meaning |
 |---|---|---|
 | `@kaku-tab-agents` | `off` | append the agent counter to `status-right` |
+| `@kaku-tab-agent-message` | `on` | store what the agent is doing — the prompt, the tool awaiting permission, the reply — for the picker's agent box |
 | `@kaku-tab-agent-color` | `@thm_mauve` | pill colour for the "agents open" count |
 | `@kaku-tab-notify-color` | `@thm_peach` | pill colour when something wants you |
 | `@kaku-tab-agent-icon` | 󰚩 | icon for the "agents open" count |

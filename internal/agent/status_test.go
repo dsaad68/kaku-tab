@@ -92,3 +92,62 @@ func TestSegmentPillShape(t *testing.T) {
 		t.Errorf("segment shape\n got %q\nwant %q", s, want)
 	}
 }
+
+// A message is stored tagged with the state it describes, and dropped on read
+// when the pane has moved on — otherwise an approved permission request would
+// still be displayed while the agent is back at work.
+func TestMsgIsTiedToItsState(t *testing.T) {
+	v := FormatMsg(Perm, "Bash: git push")
+	if got := ParseMsg(Perm, v); got != "Bash: git push" {
+		t.Errorf("ParseMsg with the matching state = %q", got)
+	}
+	if got := ParseMsg(Busy, v); got != "" {
+		t.Errorf("ParseMsg with a moved-on state = %q, want empty", got)
+	}
+	if got := ParseMsg(None, v); got != "" {
+		t.Errorf("ParseMsg with no state = %q, want empty", got)
+	}
+}
+
+// A colon in the message must not confuse the tag, which is split off once.
+func TestMsgKeepsColons(t *testing.T) {
+	const msg = "Bash: cd /x && make test: run it"
+	if got := ParseMsg(Perm, FormatMsg(Perm, msg)); got != msg {
+		t.Errorf("round trip = %q, want %q", got, msg)
+	}
+}
+
+func TestFormatMsgEmptyCases(t *testing.T) {
+	for _, tc := range []struct {
+		st  State
+		msg string
+	}{
+		{Perm, ""}, {Perm, "   "}, {None, "something"}, {Perm, "\n\t "},
+	} {
+		if got := FormatMsg(tc.st, tc.msg); got != "" {
+			t.Errorf("FormatMsg(%q, %q) = %q, want empty", tc.st, tc.msg, got)
+		}
+	}
+}
+
+// The value is read back through a \x1f-separated format string and rendered on
+// one line, so control characters have to be gone before it is ever stored.
+func TestMsgSanitized(t *testing.T) {
+	got := ParseMsg(Done, FormatMsg(Done, "line one\nline\ttwo\x1fthree   spaced"))
+	if strings.ContainsAny(got, "\n\t\x1f") {
+		t.Errorf("control characters survived: %q", got)
+	}
+	if got != "line one line two three spaced" {
+		t.Errorf("got %q", got)
+	}
+}
+
+func TestMsgCapped(t *testing.T) {
+	got := ParseMsg(Done, FormatMsg(Done, strings.Repeat("word ", 400)))
+	if len(got) > MaxMsg {
+		t.Errorf("stored %d bytes, cap is %d", len(got), MaxMsg)
+	}
+	if got == "" {
+		t.Error("capping threw the whole message away")
+	}
+}

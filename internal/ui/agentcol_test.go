@@ -205,3 +205,100 @@ func TestListHeightReservesTheAgentLine(t *testing.T) {
 			withAgent, plain)
 	}
 }
+
+// The box appears with the cursor and vanishes with it, so a list holding no
+// agents looks exactly as it did before any of this existed.
+func TestAgentBoxFollowsTheCursor(t *testing.T) {
+	ws := agentSample()
+	ws[0].Agent.Msg = "Bash: git push origin main"
+	m := New(ws, Options{Tree: true, SelfTab: "8"})
+	m.width, m.height = 150, 30
+
+	var withAgent, without int
+	for i, vi := range m.view {
+		m.cursor = i
+		if m.rows[vi].agent.Empty() {
+			without = len(m.agentBox())
+		} else {
+			withAgent = len(m.agentBox())
+		}
+	}
+	if without != 0 {
+		t.Errorf("box drawn (%d lines) for a row with no agent", without)
+	}
+	if withAgent == 0 {
+		t.Error("no box for a row with an agent")
+	}
+}
+
+// It has to say what the agent wants, not just that it wants something.
+func TestAgentBoxShowsStateAndMessage(t *testing.T) {
+	ws := agentSample()
+	ws[0].Agent.Msg = "Bash: git push origin main"
+	m := New(ws, Options{Tree: true, SelfTab: "8"})
+	m.width, m.height = 150, 30
+
+	for i, vi := range m.view {
+		if m.rows[vi].agent.State != agent.Perm {
+			continue
+		}
+		m.cursor = i
+		got := ansi.Strip(strings.Join(m.agentBox(), "\n"))
+		for _, want := range []string{"claude", "waiting for permission", "git push origin main"} {
+			if !strings.Contains(got, want) {
+				t.Errorf("box missing %q:\n%s", want, got)
+			}
+		}
+		return
+	}
+	t.Fatal("no perm row in the sample")
+}
+
+// Every line of the box must be the same width, or the right border frays.
+func TestAgentBoxLinesAreUniformWidth(t *testing.T) {
+	ws := agentSample()
+	ws[0].Agent.Msg = strings.Repeat("a long message that has to wrap ", 12)
+	for _, width := range []int{60, 90, 150, 220} {
+		m := New(ws, Options{Tree: true, SelfTab: "8"})
+		m.width, m.height = width, 40
+		for i, vi := range m.view {
+			if m.rows[vi].agent.State != agent.Perm {
+				continue
+			}
+			m.cursor = i
+			lines := m.agentBox()
+			if len(lines) == 0 {
+				t.Fatalf("width %d: no box", width)
+			}
+			first := ansi.StringWidth(lines[0])
+			for j, l := range lines {
+				if w := ansi.StringWidth(l); w != first {
+					t.Errorf("width %d: box line %d is %d cells, line 0 is %d", width, j, w, first)
+				}
+			}
+			// And it must fit inside the frame.
+			if first > m.innerW() {
+				t.Errorf("width %d: box is %d cells, frame inner is %d", width, first, m.innerW())
+			}
+		}
+	}
+}
+
+// A long message is elided, never allowed to push the help bar off screen.
+func TestAgentBoxCapsMessageLines(t *testing.T) {
+	ws := agentSample()
+	ws[0].Agent.Msg = strings.Repeat("word ", 500)
+	m := New(ws, Options{Tree: true, SelfTab: "8"})
+	m.width, m.height = 100, 30
+	for i, vi := range m.view {
+		if m.rows[vi].agent.State != agent.Perm {
+			continue
+		}
+		m.cursor = i
+		// border top + state line + at most agentBoxLines + border bottom
+		if got, max := len(m.agentBox()), 3+agentBoxLines; got > max {
+			t.Errorf("box is %d lines, want at most %d", got, max)
+		}
+		return
+	}
+}
