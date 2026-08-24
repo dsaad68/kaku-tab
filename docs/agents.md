@@ -284,7 +284,10 @@ set -g @kaku-tab-agents 'off'
 
 Plain `-g`/`-ag`, never `-F`: `-F` expands formats at load time, which would run
 the `#()` once and freeze its output instead of leaving it for the status bar to
-re-run on each redraw.
+re-run on each redraw. And `#()` runs with the PATH the tmux *server* inherited
+at start, which is often not your shell's — a server launched by launchd or
+systemd typically has neither `/usr/local/bin` nor `~/go/bin`. Use an absolute
+path if the bare name does not resolve.
 
 It draws catppuccin's own module shape — rounded separator, icon on its own
 colour, value on the shared module background — resolved from the live `@thm_*`
