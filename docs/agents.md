@@ -154,14 +154,23 @@ no agents in it looks exactly as it did before any of this existed.
 The second line is what the agent is actually doing, taken from the hook payload
 that set the state. Not every event carries one:
 
-| State | From | Message |
-|---|---|---|
-| `busy` | `UserPromptSubmit` | the prompt you gave it |
-| `perm` | `PermissionRequest` | the tool and its argument — `Bash: git push` |
-| `done` | `Stop` | the reply that ended the turn |
-| `err` | `StopFailure` | the error type |
-| `busy` | going quiet | a `busy` record untouched for 30 minutes reads as `no activity` — every hook event refreshes the timestamp, so one this old has not made a tool call in half an hour |
-| `ask` | `Elicitation` | the question an MCP server is asking |
+| State | Message, and where it comes from | Claude Code | Devin CLI |
+|---|---|---|---|
+| `busy` | the prompt you gave it — `UserPromptSubmit.prompt` | yes | yes |
+| `perm` | the tool and its argument — `PermissionRequest`, e.g. `Bash: git push` | yes | yes |
+| `done` | the reply that ended the turn — `Stop.last_assistant_message` | yes | **no** |
+| `err`  | the error type — `StopFailure.error_type` | yes | — |
+| `ask`  | the question — `Elicitation` | yes | — |
+
+Devin CLI carries a message for the two states that matter most — what it is
+working on, and what it wants to run — but not for `done`: its `Stop` payload
+reports `stop_hook_active` and no reply text, so a finished Devin turn shows the
+state and the age with no line under them. `err` and `ask` never arise at all,
+since Devin has neither `StopFailure` nor `Elicitation`.
+
+Separately from any of this, a `busy` record untouched for 30 minutes reads as
+`no activity`. Every hook event refreshes the timestamp, so one that old has not
+made a tool call in half an hour.
 
 Only the **first line that says something** is kept. An assistant reply is a
 whole markdown document — headings, code blocks, sometimes a rendered box of its
@@ -214,6 +223,10 @@ nothing.
 ```tmux
 set -g @kaku-tab-agent-notify 'on'
 ```
+
+Fires for both CLIs — it keys on the state, not on which agent reached it, so a
+Devin session blocked on a permission request notifies exactly like a Claude
+Code one.
 
 Fires on the **transition** into a state that wants you, and never on the
 repeats — a turn of tool calls does not re-notify you about the permission you
