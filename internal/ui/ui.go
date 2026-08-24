@@ -1081,8 +1081,8 @@ func agentWords(r agent.Record) string {
 	}
 	out := what
 	if r.At > 0 {
-		if d := time.Since(time.Unix(r.At, 0)); d >= time.Second {
-			out += " · " + d.Round(time.Second).String() + " ago"
+		if age := agent.Age(time.Since(time.Unix(r.At, 0))); age != "" {
+			out += " · " + age + " ago"
 		}
 	}
 	return out

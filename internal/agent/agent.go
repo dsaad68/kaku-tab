@@ -132,6 +132,33 @@ func Mark(st State) string {
 	}
 }
 
+// Age renders how long ago something happened, for the picker's agent box and
+// the `agents` listing.
+//
+// Go's own Duration.String() packs the units tight — "28h51m30s" — and keeps
+// trailing zeros, so a record exactly two hours old reads "2h0m0s". Here the
+// units are spaced and the empty ones dropped: "28h 51m 30s", "2h", "45s".
+//
+// Returns "" below a second, which the callers use to omit the age entirely
+// rather than print "0s ago".
+func Age(d time.Duration) string {
+	d = d.Round(time.Second)
+	if d < time.Second {
+		return ""
+	}
+	parts := make([]string, 0, 3)
+	for _, u := range []struct {
+		size time.Duration
+		unit string
+	}{{time.Hour, "h"}, {time.Minute, "m"}, {time.Second, "s"}} {
+		if n := int(d / u.size); n > 0 {
+			parts = append(parts, strconv.Itoa(n)+u.unit)
+			d -= time.Duration(n) * u.size
+		}
+	}
+	return strings.Join(parts, " ")
+}
+
 // Words names a state in plain language. Kept here rather than in the picker
 // because the notifier says the same thing, and the two must not drift.
 func Words(st State) string {

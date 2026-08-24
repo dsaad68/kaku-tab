@@ -276,7 +276,7 @@ func listAgents() error {
 	for _, r := range rows {
 		fmt.Printf("%-6s %-5s %-28s pid=%-7d %s ago\n",
 			r.rec.Agent, r.rec.State, r.where, r.rec.PID,
-			time.Since(time.Unix(r.rec.At, 0)).Round(time.Second))
+			agent.Age(time.Since(time.Unix(r.rec.At, 0))))
 	}
 	return nil
 }
