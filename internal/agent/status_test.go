@@ -289,3 +289,57 @@ func TestAttentionMatchesTheRecordMethod(t *testing.T) {
 		t.Error("working is not something you owe a reply to")
 	}
 }
+
+// Go's Duration.String() packs the units tight and keeps trailing zeros, so a
+// record exactly two hours old reads "2h0m0s". These are spaced, and the empty
+// units are dropped.
+func TestAge(t *testing.T) {
+	cases := []struct {
+		d    time.Duration
+		want string
+	}{
+		{28*time.Hour + 51*time.Minute + 30*time.Second, "28h 51m 30s"},
+		{22*time.Hour + 30*time.Minute + 56*time.Second, "22h 30m 56s"},
+		{2 * time.Hour, "2h"},
+		{2*time.Hour + 5*time.Second, "2h 5s"},
+		{5*time.Minute + 3*time.Second, "5m 3s"},
+		{90 * time.Second, "1m 30s"},
+		{45 * time.Second, "45s"},
+		{time.Second, "1s"},
+		{1500 * time.Millisecond, "2s"}, // rounds to the nearest second
+		// Below a second the callers omit the age rather than print "0s ago".
+		{499 * time.Millisecond, ""},
+		{0, ""},
+		{-time.Hour, ""},
+	}
+	for _, tc := range cases {
+		if got := Age(tc.d); got != tc.want {
+			t.Errorf("Age(%v) = %q, want %q", tc.d, got, tc.want)
+		}
+	}
+}
+
+// The units must always descend and never repeat, whatever the duration.
+func TestAgeUnitsAreOrderedAndUnique(t *testing.T) {
+	for _, d := range []time.Duration{
+		time.Second, 61 * time.Second, 3601 * time.Second,
+		100 * time.Hour, 359999 * time.Second,
+	} {
+		got := Age(d)
+		// The units must be a subsequence of h, m, s — descending, with gaps
+		// allowed, since "1h 1s" is right when there are no whole minutes.
+		next := 0
+		for _, part := range strings.Fields(got) {
+			u := rune(part[len(part)-1])
+			i := strings.IndexRune("hms", u)
+			if i < 0 {
+				t.Errorf("Age(%v) = %q has an unknown unit %q", d, got, u)
+				continue
+			}
+			if i < next {
+				t.Errorf("Age(%v) = %q has %q out of order or repeated", d, got, u)
+			}
+			next = i + 1
+		}
+	}
+}
