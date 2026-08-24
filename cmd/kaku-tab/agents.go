@@ -6,9 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"regexp"
-	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -64,7 +62,7 @@ func hook() error {
 	if d.Action == agent.Clear {
 		_ = tmux.UnsetPaneOption(pane, agent.PaneOption)
 		_ = tmux.UnsetPaneOption(pane, agent.MsgOption)
-		settled(prev.State, agent.None, agent.Record{})
+		settled(prev.State, agent.None)
 		return nil
 	}
 
@@ -91,7 +89,6 @@ func hook() error {
 	switch {
 	case d.Msg != "" && tmux.Option("@kaku-tab-agent-message", "on") == "on":
 		_ = tmux.SetPaneAgentMsg(pane, agent.FormatMsg(d.State, d.Msg))
-		rec.Msg = d.Msg
 	case prev.State != d.State:
 		// Entering a state with nothing to say clears whatever was there. The
 		// state tag alone is not enough: it distinguishes states, not turns, so
@@ -100,56 +97,18 @@ func hook() error {
 		// redisplay the *previous* turn's reply as if it were this one's.
 		_ = tmux.UnsetPaneOption(pane, agent.MsgOption)
 	}
-	settled(prev.State, d.State, rec)
+	settled(prev.State, d.State)
 	return nil
 }
 
 // settled does the work that only matters when a pane actually changed state:
-// tell the user, redraw the counter, and refresh the per-window rollup.
-func settled(from, to agent.State, rec agent.Record) {
+// redraw the counter and refresh the per-window rollup.
+func settled(from, to agent.State) {
 	if from == to {
 		return
 	}
-	notify(from, to, rec)
 	_ = refreshWindows()
 	tmux.RefreshStatus()
-}
-
-// notify raises a desktop notification when a pane starts wanting something
-// from you. Only on the transition into that state, never on the repeats, and
-// never for Busy — which is the state you are not being asked to do anything
-// about.
-//
-// Off by default: a tmux plugin has no business popping system notifications
-// until it is asked to.
-func notify(from, to agent.State, rec agent.Record) {
-	if !agent.Attention(to) || from == to {
-		return
-	}
-	if tmux.Option("@kaku-tab-agent-notify", "off") != "on" {
-		return
-	}
-	body := rec.Agent + " · " + agent.Words(to)
-	if rec.Msg != "" {
-		body += " — " + rec.Msg
-	}
-	// Detached and best-effort: a notifier that is missing, slow or broken must
-	// never be the reason an agent's hook hangs.
-	//
-	// The body is passed as an argument, never spliced into the script. It is
-	// an agent's own output — a prompt, a reply, a command awaiting approval —
-	// and a quote or backslash in it would otherwise close the AppleScript
-	// string literal and let the rest run as script.
-	switch runtime.GOOS {
-	case "darwin":
-		_ = exec.Command("osascript",
-			"-e", "on run argv",
-			"-e", `display notification (item 1 of argv) with title "kaku-tab"`,
-			"-e", "end run",
-			"--", body).Start()
-	default:
-		_ = exec.Command("notify-send", "--", "kaku-tab", body).Start()
-	}
 }
 
 // sweep reads every pane's record, clearing any whose agent process is gone.

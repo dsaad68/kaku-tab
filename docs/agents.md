@@ -218,26 +218,6 @@ finished, and oldest first within a rank, since the one that has been waiting
 longest is the one being kept waiting. With nothing waiting it says so and does
 nothing.
 
-## Desktop notification
-
-```tmux
-set -g @kaku-tab-agent-notify 'on'
-```
-
-Fires for both CLIs — it keys on the state, not on which agent reached it, so a
-Devin session blocked on a permission request notifies exactly like a Claude
-Code one.
-
-Fires on the **transition** into a state that wants you, and never on the
-repeats — a turn of tool calls does not re-notify you about the permission you
-already granted. Off by default: a tmux plugin has no business raising system
-notifications until it is asked to.
-
-The body carries the agent's own text, so it is passed to `osascript` as an
-argument rather than spliced into the script. A quote or backslash in a reply
-would otherwise close the AppleScript string literal and let the remainder run
-as script.
-
 ## A badge in the window list
 
 `@kt_agent_win` carries the most actionable agent in each window, refreshed

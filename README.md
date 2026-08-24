@@ -218,11 +218,10 @@ set -g @kaku-tab-agents 'on'
 set -g status-interval  5
 ```
 
-**3. Optional — a key to jump to whatever wants you, and a notification:**
+**3. Optional — a key that jumps to whatever wants you:**
 
 ```tmux
-set -g @kaku-tab-agent-key    'M-a'   # again for the next one
-set -g @kaku-tab-agent-notify 'on'    # only on the transition into waiting
+set -g @kaku-tab-agent-key 'M-a'   # again for the next one
 ```
 
 ### The status-bar counter
