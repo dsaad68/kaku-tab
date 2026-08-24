@@ -1,0 +1,256 @@
+# kaku-tab — setup runbook for an agent
+
+You are installing kaku-tab for a person. Work through this in order.
+
+Rules for this runbook:
+  - Run every VERIFY before moving on. A step that silently did nothing is the
+    normal failure here, not a crash.
+  - Stop at every ASK. The choices are the user's and several of them are hard
+    to reverse once their config is edited.
+  - Do not skip section 7. Every check in it is a failure that has actually
+    happened during a real install.
+
+What you are installing: a tmux plugin that maps one tmux window to one terminal
+tab, plus optional awareness of Claude Code / Devin CLI sessions running in
+panes. The second half is opt-in and can be left off entirely.
+
+
+## 1. Preconditions
+
+  tmux --version            # need 3.2 or newer — display-popup
+  echo $TMUX                # non-empty means you are inside tmux
+  command -v kaku wezterm   # optional; see below
+  command -v go             # optional; only needed to build from source
+
+tmux older than 3.2 has no `display-popup` and the picker cannot open. Stop and
+tell the user; there is no workaround.
+
+Kaku or WezTerm is optional. Without one, kaku-tab still works as a plain tmux
+window switcher — it just cannot map windows to terminal tabs, which is the
+point of the tool. Say so plainly rather than installing something that will
+underdeliver.
+
+
+## 2. ASK before you touch anything
+
+  a. Which install path? TPM, a prebuilt release binary, `go install`, or a
+     local checkout they already have. If they use TPM, use TPM.
+
+  b. Which key opens the picker? Default is M-l. Check it is free FIRST:
+
+       tmux list-keys -T root | grep -E '\bM-l\b'
+
+     Any output means it is taken. Also warn: if their terminal sends composed
+     characters for Option/Alt (macOS sends ¬ for Option+l), the binding will
+     never fire. In Kaku/WezTerm that is
+     `send_composed_key_when_left_alt_is_pressed = false`.
+
+  c. Do they want the agent features at all (sections 5 and 6)? If they do not
+     use Claude Code or Devin CLI, skip both and finish at section 4.
+
+  d. Only if they said yes to (c): do they want desktop notifications, and do
+     they have a Nerd Font? You cannot detect a Nerd Font — ask. Without one
+     the status-bar icons render as tofu, and you must set the plain-text
+     overrides in section 6.
+
+
+## 3. Install the binary
+
+TPM — add to tmux.conf, then press prefix + I:
+
+  set -g @plugin 'dsaad68/kaku-tab'
+
+Prebuilt release:
+
+  # pick the asset matching uname -s / uname -m
+  gh release download --repo dsaad68/kaku-tab -p 'kaku-tab_*_darwin_arm64.tar.gz'
+  tar xzf kaku-tab_*.tar.gz
+  # macOS quarantines an unnotarized binary on first run:
+  xattr -d com.apple.quarantine ./kaku-tab 2>/dev/null || true
+  # then put it somewhere on PATH
+
+Go:
+
+  go install github.com/dsaad68/kaku-tab/cmd/kaku-tab@latest
+
+VERIFY:
+
+  kaku-tab version          # prints "kaku-tab <version>"
+
+
+## 4. Load the plugin
+
+TPM does this. For a checkout or a manual install, add near the BOTTOM of
+tmux.conf — after the TPM `run` line, so the binding is registered last:
+
+  set -g @kaku-tab-key 'M-l'
+  run-shell '/absolute/path/to/kaku-tab/kaku-tab.tmux'
+
+Then:
+
+  tmux source-file ~/.config/tmux/tmux.conf
+
+VERIFY — the binding exists, and the join works:
+
+  tmux list-keys -T root | grep kaku-tab
+  kaku-tab resolve          # one line per tmux window
+
+VERIFY the picker actually draws, without needing the user to press anything:
+
+  tmux new-session -d -s kt-verify -x 150 -y 30 "$(command -v kaku-tab) pick '' kt-verify"
+  sleep 2 && tmux capture-pane -p -t kt-verify
+  tmux kill-session -t kt-verify
+
+You should see a framed list of windows. If `kaku-tab resolve` prints rows but
+the picker does not draw, the binary is fine and the problem is the popup —
+recheck the tmux version.
+
+If the user only wanted the window/tab picker, STOP HERE.
+
+
+## 5. Agent awareness (optional)
+
+This makes Claude Code and Devin CLI sessions visible in the picker.
+
+  kaku-tab install-hooks --dry-run    # show the merge first
+  kaku-tab install-hooks
+
+It merges one hooks block into ~/.claude/settings.json. Both CLIs read that
+file, so one block serves both. It is idempotent, preserves every other key and
+every hook the user wrote, and backs the old file up to
+settings.json.kaku-tab.bak.
+
+TELL THE USER TWO THINGS:
+
+  - Already-running agent sessions must be restarted to pick the hooks up.
+    Nothing appears until then, and an empty result looks identical to a broken
+    install.
+  - The agent box stores what the agent is doing — including prompt text and
+    tool arguments — in a tmux option readable by anything that can talk to
+    their tmux server. `set -g @kaku-tab-agent-message 'off'` keeps the box and
+    drops the message line. Mention this before installing, not after.
+
+Optional extras:
+
+  set -g @kaku-tab-agent-key    'M-a'   # jump to whatever wants you
+  set -g @kaku-tab-agent-notify 'on'    # desktop notification, default off
+
+VERIFY — start or restart a Claude Code session in a pane, then:
+
+  kaku-tab agents           # one line per agent pane
+
+Empty output after a restart means the hooks are not firing. Check that the
+command in ~/.claude/settings.json points at a binary that still exists —
+install-hooks writes an absolute path, so moving the binary breaks it and you
+must re-run install-hooks.
+
+
+## 6. Status-bar counter (optional)
+
+  set -g @kaku-tab-agents 'on'
+  set -g status-interval  5
+
+ASK FIRST if their `status-right` is hand-composed. `@kaku-tab-agents 'on'`
+APPENDS to the end of status-right, i.e. the far right of the bar. If they want
+it anywhere else, leave the option off and place it themselves:
+
+  set -g  status-right "#(/absolute/path/to/kaku-tab agents --format tmux)"
+  set -ag status-right "#{E:@catppuccin_status_session}"
+  set -g @kaku-tab-agents 'off'
+
+Two traps, both of which silently produce a bar that looks fine and is wrong:
+
+  - Use -g / -ag, NEVER -agF. The -F flag expands the format at load time,
+    which runs the #() once and freezes the count forever.
+  - #() runs with the PATH the tmux SERVER inherited when it started, which is
+    often not the user's shell PATH. A server started by launchd or systemd
+    typically has neither /usr/local/bin nor ~/go/bin. Use an absolute path.
+
+If the user has no Nerd Font (section 2d), set plain-text icons or they will
+see two boxes of tofu:
+
+  set -g @kaku-tab-notify-icon '!'
+  set -g @kaku-tab-agent-icon  'AI'
+
+VERIFY:
+
+  kaku-tab agents --format tmux
+
+Empty output is CORRECT when no agent is running — the segment is meant to
+disappear. To prove it renders, check it with an agent actually running.
+
+
+## 7. Conflict checks — do not skip
+
+  a. Existing tab-title hooks. If this prints anything, DO NOT set
+     @kaku-tab-titles 'on' — both would fire on the same events and fight over
+     the title:
+
+       tmux show-hooks -g | grep -i 'set-tab-title'
+
+  b. Duplicated status segment. Sourcing the config repeatedly must not stack
+     copies. Source it twice and confirm this still prints 1:
+
+       tmux show-option -gv status-right | grep -c 'agents --format tmux'
+
+  c. Prefix and root-table collisions for every key you bound:
+
+       tmux list-keys -T root | grep -E '\bM-l\b|\bM-a\b'
+
+  d. The picker's own session must not appear in its list if they use a
+     throwaway popup session — that is what @kaku-tab-ignore is for.
+
+
+## 8. Report what you changed
+
+List these explicitly when you finish. The user needs to know what to undo:
+
+  - ~/.claude/settings.json          (backup: settings.json.kaku-tab.bak)
+  - their tmux.conf                  (take a backup before editing it)
+  - a binary on PATH, or a TPM plugin directory
+
+To undo: remove the `hooks` block from settings.json (or restore the backup),
+remove the kaku-tab lines from tmux.conf, source the config, and delete the
+binary. Agent state lives in tmux pane options and dies with the tmux server —
+there is nothing to clean up on disk.
+
+
+## 9. Troubleshooting — symptom to cause
+
+  Key does nothing
+    -> binding not registered (list-keys), or the terminal sends a composed
+       character for Alt, or another binding won the key.
+
+  Picker opens but every window says DETACHED
+    -> the Kaku/WezTerm CLI is missing or not on PATH. kaku-tab falls back to a
+       plain switcher. `command -v kaku wezterm`.
+
+  `kaku-tab agents` is empty
+    -> hooks not installed, or the agent session predates the install and needs
+       restarting, or install-hooks wrote a path to a binary that has moved.
+
+  Status segment never appears
+    -> no agent running (correct), or #() cannot find the binary on the tmux
+       server's PATH (section 6), or -agF froze it at load time.
+
+  Status count never changes
+    -> -agF was used. It expanded once at load. Use -ag.
+
+  Two boxes of tofu in the status bar
+    -> no Nerd Font. Set the plain-text icon overrides (section 6).
+
+  Everything works, then stops after moving the binary
+    -> re-run `kaku-tab install-hooks`; the hook command is an absolute path.
+
+
+## 10. Reference
+
+  README.md            overview and every install path
+  docs/agents.md       agent states, storage, options, the status bar
+  docs/configuration.md  every tmux option
+  docs/design.md       how the window/tab join works
+  docs/troubleshooting.md
+
+  kaku-tab resolve     the join, for debugging
+  kaku-tab agents      agent panes
+  kaku-tab --help      every subcommand
