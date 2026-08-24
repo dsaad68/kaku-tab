@@ -185,42 +185,120 @@ were, alt-tab style.
 
 Claude Code and Devin CLI sessions show up as a column in the picker — one glyph
 for which agent, one for what it wants: working, blocked on a permission prompt,
-asking you something, finished, or failed. The tmux status bar gets two counters:
-how many agents want you, and how many are open.
+asking you something, finished, or failed. Moving onto one opens a box saying
+what it is actually doing. And the tmux status bar gets two counters:
 
 ```
- 󰂚 1   󰚩 3
+ 󰂚 5   󰚩 5      5 want you · 5 open
 ```
-
-```sh
-kaku-tab install-hooks           # one block in ~/.claude/settings.json, both CLIs
-```
-
-```tmux
-set -g @kaku-tab-agent-key    'M-a'   # jump to whatever wants you; again for the next
-set -g @kaku-tab-agent-notify 'on'    # notify on the transition into waiting
-```
-
-```tmux
-set -g @kaku-tab-agents 'on'
-set -g status-interval  5
-```
-
-That appends the pills to the end of `status-right`, i.e. the far right of the
-bar. To place them anywhere else, leave the option off and put
-`#(kaku-tab agents --format tmux)` where you want it.
-
-Moving onto a row with an agent opens a box below the list saying what it is
-doing — the prompt it is working on, the command it wants permission for, the
-reply that ended its turn.
 
 The agents report themselves: each CLI's lifecycle hooks run `kaku-tab hook`,
 which records the state on the pane it inherited via `$TMUX_PANE`. Nothing is
 guessed from the process table — `#{pane_current_command}` says `node` for
 Claude Code, and no process name can tell "thinking" from "waiting on you".
 
-Because the state lives in a tmux pane option, it rides in on the `list-panes`
-query the picker already makes, and it disappears with the pane. See
+### Setting it up
+
+**1. Install the hooks.** One block in `~/.claude/settings.json` serves both
+CLIs — Devin CLI reads that file too, and `kaku-tab hook` tells them apart from
+the environment. Idempotent, and it leaves every other key and every hook of
+your own alone:
+
+```sh
+kaku-tab install-hooks          # --dry-run to see the merge first
+```
+
+Restart any running agent session to pick it up. **Nothing appears until this is
+done** — with no hooks publishing state there is nothing to count.
+
+**2. Turn on the status-bar counter:**
+
+```tmux
+set -g @kaku-tab-agents 'on'
+set -g status-interval  5
+```
+
+**3. Optional — a key to jump to whatever wants you, and a notification:**
+
+```tmux
+set -g @kaku-tab-agent-key    'M-a'   # again for the next one
+set -g @kaku-tab-agent-notify 'on'    # only on the transition into waiting
+```
+
+### The status-bar counter
+
+| Pill | Counts |
+|---|---|
+| 󰂚 | how many agents **want you** — waiting, finished, or failed |
+| 󰚩 | how many agents are **open** at all |
+
+The bell greys out at zero rather than disappearing, so the pill beside it does
+not shift every time an agent finishes. The whole segment prints nothing at all
+when no agent is running.
+
+**It needs a Nerd Font** for the two glyphs (`nf-md-bell` and `nf-md-robot`).
+Without one you will get tofu — swap them for anything, including plain text:
+
+```tmux
+set -g @kaku-tab-notify-icon '!'
+set -g @kaku-tab-agent-icon  'AI'
+```
+
+**Placement.** `@kaku-tab-agents 'on'` appends the pills to the end of
+`status-right`, which is the far right of the bar. To put them anywhere else,
+leave the option `off` and place the command yourself:
+
+```tmux
+set -g  status-right "#(kaku-tab agents --format tmux)"
+set -ag status-right "#{E:@catppuccin_status_session}"
+set -agF status-right "#{E:@catppuccin_status_battery}"
+
+set -g @kaku-tab-agents 'off'
+```
+
+Plain `-g`/`-ag`, never `-F`: `-F` expands formats at load time, which would run
+the `#()` once and freeze the count instead of leaving it for the status bar to
+re-run.
+
+`#()` runs with the PATH the **tmux server** inherited when it started, which is
+often not your shell's — a server launched by launchd or systemd typically has
+neither `/usr/local/bin` nor `~/go/bin`. Use an absolute path if the bare name
+does not resolve:
+
+```tmux
+set -g status-right "#(/full/path/to/kaku-tab agents --format tmux)"
+```
+
+**Theming.** The pills are drawn in catppuccin's own status-module shape — a
+rounded separator, the icon on its own colour, the value on the shared module
+background — resolved from the live `@thm_*` palette, so they sit flush against
+whatever modules you already have. Without catppuccin loaded they fall back to
+plain terminal colour names and still render. Override the two colours with:
+
+```tmux
+set -g @kaku-tab-notify-color '#fab387'   # default: @thm_peach
+set -g @kaku-tab-agent-color  '#cba6f7'   # default: @thm_mauve
+```
+
+They are deliberately *not* a catppuccin module: a real module always paints its
+icon and separators, including around an empty value — which is what this
+segment is most of the time.
+
+**Refresh.** `status-interval` is only the ceiling on staleness. The hook calls
+`refresh-client -S` on every attached client the moment an agent changes state,
+so the count moves as it happens rather than up to five seconds later.
+
+### Elsewhere
+
+A badge in the window list, and the state in the terminal tab title, so a
+blocked agent is visible with the picker closed:
+
+```tmux
+set -g window-status-format         "#{?@kt_agent_win,#{@kt_agent_win} ,}#I:#W"
+set -g window-status-current-format "#{?@kt_agent_win,#{@kt_agent_win} ,}#I:#W"
+```
+
+Full reference — every state, every option, and how the state is stored — in
 [docs/agents.md](docs/agents.md).
 
 ## Scrollback search
