@@ -48,10 +48,9 @@ underdeliver.
   c. Do they want the agent features at all (sections 5 and 6)? If they do not
      use Claude Code or Devin CLI, skip both and finish at section 4.
 
-  d. Only if they said yes to (c): do they want desktop notifications, and do
-     they have a Nerd Font? You cannot detect a Nerd Font — ask. Without one
-     the status-bar icons render as tofu, and you must set the plain-text
-     overrides in section 6.
+  d. Only if they said yes to (c): do they have a Nerd Font? You cannot detect
+     one — ask. Without it the status-bar icons render as tofu, and you must set
+     the plain-text overrides in section 6.
 
 
 ## 3. Install the binary
@@ -130,10 +129,9 @@ TELL THE USER TWO THINGS:
     their tmux server. `set -g @kaku-tab-agent-message 'off'` keeps the box and
     drops the message line. Mention this before installing, not after.
 
-Optional extras:
+Optional extra:
 
-  set -g @kaku-tab-agent-key    'M-a'   # jump to whatever wants you
-  set -g @kaku-tab-agent-notify 'on'    # desktop notification, default off
+  set -g @kaku-tab-agent-key 'M-a'   # jump to whatever wants you
 
 VERIFY — start or restart a Claude Code session in a pane, then:
 
