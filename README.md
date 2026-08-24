@@ -332,6 +332,9 @@ brings the sessions back, this brings the tabs back.
 - [Agents](docs/agents.md) — Claude Code / Devin CLI state in the picker and status bar
 - [Configuration](docs/configuration.md) — every option
 - [Troubleshooting](docs/troubleshooting.md)
+- [llm.txt](llm.txt) — a setup runbook written for an AI agent to execute, with
+  a verification after every step and the conflict checks that have actually
+  bitten someone
 
 ## Development
 
